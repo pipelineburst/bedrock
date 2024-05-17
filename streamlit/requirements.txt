@@ -1,0 +1,7 @@
+sqlalchemy
+pyAthena[SQLAlchemy]
+langchain
+anthropic
+streamlit
+langchain_experimental
+boto3
