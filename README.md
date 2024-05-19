@@ -57,6 +57,14 @@ Upon completion you will be provided with a DNS domain name and a HTTP/HTTPS URL
 
 You can further refine the logic by applying optional arguments to the deployment. These are each documented below.
 
+### Development Resources
+
+To enable development resources use the dev=true argument. This will provision a cloud9 instance, an EFS file system, and an additional mountpoint for the application countainer image. You can use the below sample to demonstrate how this flag is activated.
+
+```
+$ cdk deploy --context dev=true
+```
+
 ### HTTPS Support
 
 To enable HTTPS support you will need to pass a [ACM Certificate](https://aws.amazon.com/certificate-manager/) ARN from the account and region in which the deployment will reside in. You can use the below sample to demonstrate how this flag is activated.

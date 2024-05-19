@@ -9,12 +9,12 @@ import base64
 import io
 import sys
 
-agentId = "RBJJAVBVEM" 
-agentAliasId = "VGRFUDTJZN"
+agentId = os.environ["BEDROCK_AGENT_ID"]
+agentAliasIdString = os.environ["BEDROCK_AGENT_ALIAS"]
+agentAliasId = agentAliasIdString[-10:]
 
-theRegion = "us-west-2"
-os.environ["AWS_REGION"] = theRegion
-region = os.environ.get("AWS_REGION")
+theRegion = os.environ["AWS_REGION"]
+region = os.environ["AWS_REGION"]
 llm_response = ""
 
 def sigv4_request(
@@ -24,7 +24,7 @@ def sigv4_request(
     params=None,
     headers=None,
     service='execute-api',
-    region=os.environ['AWS_REGION'],
+    region=region,
     credentials=Session().get_credentials().get_frozen_credentials()
 ):
     """Sends an HTTP request signed with SigV4

@@ -5,3 +5,9 @@ anthropic
 streamlit
 langchain_experimental
 boto3
+pandas
+numpy
+scipy
+scikit-learn
+matplotlib
+seaborn

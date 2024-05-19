@@ -1,5 +1,3 @@
-from math import inf
-from constructs import Construct
 from aws_cdk import (
     Duration,
     Stack,
@@ -14,15 +12,21 @@ from cdk_nag import (
     NagPackSuppression,
     NagSuppressions
 )
+from constructs import Construct
+import hashlib
 
 class BedrockStack(Stack):
 
-    def __init__(self, scope: Construct, id: str, dict1, lambda_arn, **kwargs) -> None:
+    def __init__(self, scope: Construct, id: str, dict1, athena_lambda_arn, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
+        
+        # Create a unique string to create unique resource names
+        hash_base_string = (self.account + self.region)
+        hash_base_string = hash_base_string.encode("utf8")
 
         # Create a bedrock agent execution role with permissions to interact with the services
         bedrock_agent_role = iam.Role(self, 'bedrock-agent-role',
-            role_name='AmazonBedrockExecutionRoleForAgents_QQQQQQQQQQ',
+            role_name='AmazonBedrockExecutionRoleForAgents_KIUEYHSVDR',
             assumed_by=iam.ServicePrincipal('bedrock.amazonaws.com'),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name('AmazonBedrockFullAccess'),
@@ -47,7 +51,7 @@ class BedrockStack(Stack):
 
         # Create S3 bucket for the data set
         schema_bucket = s3.Bucket(self, "schema-bucket",
-            bucket_name="schema-bucket-u4jedu3",
+            bucket_name=("schema-bucket-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
             auto_delete_objects=True,
             versioned=True,
             removal_policy=RemovalPolicy.DESTROY,
@@ -106,7 +110,7 @@ class BedrockStack(Stack):
             agent_instruction = file.read()
 
         # Add schema for the bedrock agent
-        with open('assets/schema/open_api_schema.json', 'r') as file:
+        with open('assets/schema/athena_ag_schema.json', 'r') as file:
             schema_def = file.read()
 
         # Define advanced prompt - orchestation template - override orchestration template defaults
@@ -115,7 +119,7 @@ class BedrockStack(Stack):
 
         # Create a bedrock agent        
         bedrock_agent = bedrock.CfnAgent(self, 'bedrock-agent',
-            agent_name='cdk-bedrock-agent',
+            agent_name='saas-acs-bedrock-agent',
             description="This is a bedrock agent that can be invoked by calling the bedrock agent alias and agent id.",
             auto_prepare=True,
             foundation_model="anthropic.claude-3-haiku-20240307-v1:0",
@@ -137,10 +141,10 @@ class BedrockStack(Stack):
                     )
                 ]),
             action_groups=[bedrock.CfnAgent.AgentActionGroupProperty(
-                    action_group_name="AgentActionGroup",
-                    description="This action group calls amazon athena to execute sql queries.",
+                    action_group_name="AthenaToolFunction",
+                    description="A Function Tool that can access a network metrics dataset.",
                     action_group_executor=bedrock.CfnAgent.ActionGroupExecutorProperty(
-                        lambda_=lambda_arn,
+                        lambda_=athena_lambda_arn,
                     ),
                     api_schema=bedrock.CfnAgent.APISchemaProperty(
                         payload=schema_def,
@@ -149,8 +153,20 @@ class BedrockStack(Stack):
                         #     s3_bucket_name=schema_bucket.bucket_name,
                         #     s3_object_key="schema/open_api_schema.json",
                         #),
+                        ),
                     ),
-                )],
+                    # add this block back in later when the second lambda is created
+                    # bedrock.CfnAgent.AgentActionGroupProperty(
+                    # action_group_name="WebsearchToolFunction",
+                    # description="A Function Tool that can search the web.",
+                    # action_group_executor=bedrock.CfnAgent.ActionGroupExecutorProperty(
+                    #     lambda_=athena_lambda_arn,
+                    # ),
+                    # api_schema=bedrock.CfnAgent.APISchemaProperty(
+                    #     payload=schema_def,
+                    #     ),
+                    # )
+                    ],
         )
 
         CfnOutput(self, "BedrockAgentID",
@@ -158,21 +174,31 @@ class BedrockStack(Stack):
             export_name="BedrockAgentID"
         )
         
-        # Create an alias for the bedrock agent
+        CfnOutput(self, "BedrockAgentModelName",
+            value=bedrock_agent.foundation_model,
+            export_name="BedrockAgentModelName"
+        )        
+        
+        # Create an alias for the bedrock agent        
         cfn_agent_alias = bedrock.CfnAgentAlias(self, "MyCfnAgentAlias",
             agent_alias_name="bedrock-agent-alias",
             agent_id=bedrock_agent.ref,
-            # the properties below are optional
             description="bedrock agent alias to simplify agent invocation",
-            routing_configuration=[bedrock.CfnAgentAlias.AgentAliasRoutingConfigurationListItemProperty(
-                agent_version="1",
-            )],
+            # note: when initially creating the agent alias, the agent version is defined automatically
+            # routing_configuration=[bedrock.CfnAgentAlias.AgentAliasRoutingConfigurationListItemProperty(
+            #     agent_version="1",
+            # )],
             tags={
                 "owner": "saas"
             }
         )
+        cfn_agent_alias.add_dependency(bedrock_agent)     
+        
+        agent_alias_string = cfn_agent_alias.ref
+        agent_alias = agent_alias_string.split("|")[-1]
         
         CfnOutput(self, "BedrockAgentAlias",
-            value=cfn_agent_alias.ref,
+            value=agent_alias,
             export_name="BedrockAgentAlias"
         )
+        

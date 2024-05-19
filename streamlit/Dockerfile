@@ -6,7 +6,8 @@ COPY requirements.txt requirements.txt
 RUN pip install -r requirements.txt \
     && apt-get update && apt-get -y install \
        vim \
-       curl 
+       curl \
+       procps
 
 # RUN mkdir /usr/src/app/.streamlit
 # COPY config.toml /usr/src/app/.streamlit/config.toml 

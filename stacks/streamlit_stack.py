@@ -12,11 +12,11 @@ from aws_cdk import (
     RemovalPolicy,
     CfnOutput,
 )
+import aws_cdk
 from cdk_nag import (
     NagPackSuppression,
     NagSuppressions
 )
-
 from constructs import Construct
 import hashlib
 
@@ -26,14 +26,14 @@ class StreamlitStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         # Creating the VPC for the ECS service
-        vpc = ec2.Vpc(self, "NetworkAssistantVPC",
+        vpc = ec2.Vpc(self, "CompanionVPC",
             ip_addresses=ec2.IpAddresses.cidr("10.0.0.0/16"),
             max_azs=2,
             nat_gateway_subnets=None,
             subnet_configuration=[ec2.SubnetConfiguration(name="public",subnet_type=ec2.SubnetType.PUBLIC,cidr_mask=24)]
         )
 
-        # Create a unique string for the account and region, which is used to create unique names, e.g. for the ALB
+        # Create a unique string to create unique resource names
         hash_base_string = (self.account + self.region)
         hash_base_string = hash_base_string.encode("utf8")
 
@@ -41,7 +41,7 @@ class StreamlitStack(Stack):
         acm_certificate_arn = self.node.try_get_context('acm_certificate_arn')
 
         # Use the ApplicationLoadBalancedFargateService L3 construct to create the application load balanced behind an ALB
-        load_balanced_service = ecs_patterns.ApplicationLoadBalancedFargateService(self, "NetworkAssistantService",
+        load_balanced_service = ecs_patterns.ApplicationLoadBalancedFargateService(self, "CompanionService",
             vpc=vpc,
             cpu=1024,
             memory_limit_mib=4096,
@@ -51,22 +51,32 @@ class StreamlitStack(Stack):
             enable_execute_command=True,
             certificate=(acm.Certificate.from_certificate_arn(self, "certificate", certificate_arn=acm_certificate_arn) if acm_certificate_arn else None),
             redirect_http=(True if acm_certificate_arn else False),
-            load_balancer_name=("saas-acs-genai-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            load_balancer_name=("saas-companion-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
             task_image_options=ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
-                # Builds and imports the container image directly from the local directory (requires Docker to be installed on the local machine)
-                image=ecs.ContainerImage.from_asset("streamlit"),
-                environment={
-                    "STREAMLIT_SERVER_RUN_ON_SAVE": "true",
-                    "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
-                    "STREAMLIT_THEME_BASE": "light",
-                    "STREAMLIT_THEME_TEXT_COLOR": "#00617F",
-                    "STREAMLIT_THEME_FONT": "sans serif",
-                    "STREAMLIT_THEME_BACKGROUND_COLOR": "#C1C6C8",
-                    "STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR": "#ffffff",
-                    "STREAMLIT_THEME_PRIMARY_COLOR": "#C1C6C8"
-                }
+            # Builds and imports the container image directly from the local directory (requires Docker to be installed on the local machine)
+            image=ecs.ContainerImage.from_asset("streamlit"),
+            environment={
+                "STREAMLIT_SERVER_RUN_ON_SAVE": "true",
+                "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
+                "STREAMLIT_THEME_BASE": "light",
+                "STREAMLIT_THEME_TEXT_COLOR": "#00617F",
+                "STREAMLIT_THEME_FONT": "sans serif",
+                "STREAMLIT_THEME_BACKGROUND_COLOR": "#C1C6C8",
+                "STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR": "#ffffff",
+                "STREAMLIT_THEME_PRIMARY_COLOR": "#C1C6C8",
+                "BEDROCK_AGENT_ID": Fn.import_value("BedrockAgentID"),
+                "BEDROCK_AGENT_ALIAS": Fn.import_value("BedrockAgentAlias"),
+                "AWS_REGION": self.region,
+                "AWS_ACCOUNT_ID": self.account,
+            }
             )
         )   
+
+        # Export the ALB Name
+        CfnOutput(self, "ALBName",
+            value=load_balanced_service.load_balancer.load_balancer_name,
+            export_name="ALBName"
+        )
         
         # Adding the necessary permissions to the ECS task role to interact with the services
         
@@ -245,32 +255,54 @@ class StreamlitStack(Stack):
             description="Allow inbound NFS traffic from anywhere"            
             )
 
-        # Creating an EFS file system, which is then mounted into the task definition for easy access to the Streamlit app data
+        # Was the dev argument passed in as part of the cdk deploy? 
+        # If so then an EFS file system will be created and mounted into the task definition for easy access to the Streamlit application code.
 
-        efs_file_system = efs.FileSystem(self, "FileSystem",
-                                         vpc=vpc,
-                                         allow_anonymous_access=True,
-                                         encrypted=True,
-                                         security_group=security_group,
-                                         removal_policy=RemovalPolicy.DESTROY
-                                         )
-        
-        load_balanced_service.task_definition.add_volume(
-            name="my-efs-volume",
-            efs_volume_configuration=ecs.EfsVolumeConfiguration(
-                file_system_id=efs_file_system.file_system_id
+        # Creating an EFS file system to help during the development phase. The EFS file system is then mounted into the task definition for easy access to the Streamlit application code.
+        dev = self.node.try_get_context('dev')
+        if dev:
+
+            efs_file_system = efs.FileSystem(self, "FileSystem",
+                                            vpc=vpc,
+                                            allow_anonymous_access=True,
+                                            encrypted=True,
+                                            security_group=security_group,
+                                            removal_policy=RemovalPolicy.DESTROY
+                                            )
+            
+            load_balanced_service.task_definition.add_volume(
+                name="my-efs-volume",
+                efs_volume_configuration=ecs.EfsVolumeConfiguration(
+                    file_system_id=efs_file_system.file_system_id
+                )
             )
-        )
-        
-        # Mounting the EFS file system root volume into the container
-        container_definition = load_balanced_service.task_definition.default_container
-        container_definition.add_mount_points(
-            ecs.MountPoint(
-                container_path="/usr/src",
-                source_volume="my-efs-volume",
-                read_only=False
+            
+            # Mounting the EFS file system root volume into the container
+            # As the EFS file system is empty the container wont see the app files. Use the cloud9 instace to copy the app files into it for development purposes.
+            # For production, the EFS file system and the countainer mount wont be necessary as the container image will have the final app files already.  
+            container_definition = load_balanced_service.task_definition.default_container
+            container_definition.add_mount_points(
+                ecs.MountPoint(
+                    container_path="/usr/src",
+                    source_volume="my-efs-volume",
+                    read_only=False
+                )
             )
-        )
+
+            # Creating a cloud9 environment for the development phase
+            cloud9 = ec2.Instance(self, "Cloud9",
+                instance_type=ec2.InstanceType.of(
+                    ec2.InstanceClass.BURSTABLE2,
+                    ec2.InstanceSize.MICRO
+                ),
+                machine_image=ec2.MachineImage.latest_amazon_linux(),
+                vpc=vpc,
+                vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+                security_group=security_group,
+                key_name="bedrock",
+                block_devices=[ec2.BlockDevice(device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(8, encrypted=True))],
+                user_data=ec2.UserData.for_linux()
+            )
 
         # Was the email address argument passed in as part of the cdk deploy? If so then authentication will be applied to the ALB
         email_address = self.node.try_get_context('email_address')

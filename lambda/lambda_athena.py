@@ -4,7 +4,7 @@ from time import sleep
 # Initialize the Athena client
 athena_client = boto3.client('athena')
 
-def lambda_handler(event, context):
+def handler(event, context):
     print(event)
 
     def athena_query_handler(event):
@@ -15,7 +15,7 @@ def lambda_handler(event, context):
 
         print("the received QUERY:",  query)
         
-        s3_output = 's3://athena-destination-u4jedu3'  # our athena destination s3 bucket
+        s3_output = 's3://athena-destination-133f68a4e67d3d4'  # our athena destination s3 bucket
 
         # Execute the query and wait for completion
         execution_id = execute_athena_query(query, s3_output)

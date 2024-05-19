@@ -15,17 +15,22 @@ from cdk_nag import (
     NagSuppressions
 )
 from constructs import Construct
+import hashlib
 
 class KnowledgebaseStack(Stack):
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        # Create a unique string to create unique resource names
+        hash_base_string = (self.account + self.region)
+        hash_base_string = hash_base_string.encode("utf8")
+
         ### Create data-set resources
         
         # Create S3 bucket for the data set
         data_bucket = s3.Bucket(self, "DataLake",
-            bucket_name="data-lake-u4jedu3",
+            bucket_name=("data-bucket-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
             auto_delete_objects=True,
             versioned=True,
             removal_policy=RemovalPolicy.DESTROY,
@@ -180,8 +185,7 @@ class KnowledgebaseStack(Stack):
                     "Name": dataset_crawler.name
         }
 
-        # Define a custom resource to make an  AwsSdk startCrawler call to the Glue API     
-           
+        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
         crawler_cr = cr.AwsCustomResource(self, "GlueCrawlerCustomResource",
             on_create=cr.AwsSdkCall(
                 service="Glue",
@@ -194,7 +198,6 @@ class KnowledgebaseStack(Stack):
             )
      
         # Define IAM permission policy for the custom resource    
-              
         crawler_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
             actions=["glue:StartCrawler", "glue:ListCrawlers", "iam:CreateServiceLinkedRole"],
@@ -206,7 +209,7 @@ class KnowledgebaseStack(Stack):
         
         # Create S3 athena destination bucket 
         athena_bucket = s3.Bucket(self, "AthenaDestination",
-            bucket_name="athena-destination-u4jedu3",
+            bucket_name=("athena-destination-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
             auto_delete_objects=True,
             versioned=True,
             removal_policy=RemovalPolicy.DESTROY,

@@ -35,7 +35,7 @@ stack3 = BedrockStack(app, "BedrockAgentStack",
             termination_protection=False, 
             tags={"project":"bedrock-agents"},
             dict1=dict1,
-            lambda_arn=stack2.lambda_arn
+            athena_lambda_arn=stack2.athena_lambda_arn
 )
 
 stack4 = StreamlitStack(app, "StreamlitStack",
@@ -50,9 +50,9 @@ stack2.add_dependency(stack1)
 stack3.add_dependency(stack2)
 stack4.add_dependency(stack3)
 
-cdk.Tags.of(stack1).add(key="owner",value="saas")
-cdk.Tags.of(stack2).add(key="owner",value="saas")
-cdk.Tags.of(stack3).add(key="owner",value="saas")
-cdk.Tags.of(stack4).add(key="owner",value="saas")
+cdk.Tags.of(stack1).add(key="owner",value="acs")
+cdk.Tags.of(stack2).add(key="owner",value="acs")
+cdk.Tags.of(stack3).add(key="owner",value="acs")
+cdk.Tags.of(stack4).add(key="owner",value="acs")
 
 app.synth()
