@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_bedrock as bedrock,
     aws_s3_deployment as s3d,
     aws_s3 as s3,
+    Fn as Fn,
 )
 from cdk_nag import (
     NagPackSuppression,
@@ -17,7 +18,7 @@ import hashlib
 
 class BedrockStack(Stack):
 
-    def __init__(self, scope: Construct, id: str, dict1, athena_lambda_arn, **kwargs) -> None:
+    def __init__(self, scope: Construct, id: str, dict1, athena_lambda_arn, search_lambda_arn, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
         
         # Create a unique string to create unique resource names
@@ -111,11 +112,18 @@ class BedrockStack(Stack):
 
         # Add schema for the bedrock agent
         with open('assets/schema/athena_ag_schema.json', 'r') as file:
-            schema_def = file.read()
+            athena_schema_def = file.read()
+            
+        with open('assets/schema/search_ag_schema.json', 'r') as file:
+            search_schema_def = file.read()
 
         # Define advanced prompt - orchestation template - override orchestration template defaults
         with open('assets/agent_orchenstation_template.json', 'r') as file:
             orc_temp_def = file.read()
+
+        # Define advanced prompt - pre-processing template - override pre-processing template defaults
+        with open('assets/agent_preprocessing_template', 'r') as file:
+            pre_temp_def = file.read()
 
         # Create a bedrock agent        
         bedrock_agent = bedrock.CfnAgent(self, 'bedrock-agent',
@@ -147,7 +155,7 @@ class BedrockStack(Stack):
                         lambda_=athena_lambda_arn,
                     ),
                     api_schema=bedrock.CfnAgent.APISchemaProperty(
-                        payload=schema_def,
+                        payload=athena_schema_def,
                         ### leaving this here for future reference as the 3 bucket option fails with cloudformation error
                         # s3=bedrock.CfnAgent.S3IdentifierProperty(
                         #     s3_bucket_name=schema_bucket.bucket_name,
@@ -155,17 +163,16 @@ class BedrockStack(Stack):
                         #),
                         ),
                     ),
-                    # add this block back in later when the second lambda is created
-                    # bedrock.CfnAgent.AgentActionGroupProperty(
-                    # action_group_name="WebsearchToolFunction",
-                    # description="A Function Tool that can search the web.",
-                    # action_group_executor=bedrock.CfnAgent.ActionGroupExecutorProperty(
-                    #     lambda_=athena_lambda_arn,
-                    # ),
-                    # api_schema=bedrock.CfnAgent.APISchemaProperty(
-                    #     payload=schema_def,
-                    #     ),
-                    # )
+                    bedrock.CfnAgent.AgentActionGroupProperty(
+                    action_group_name="WebsearchToolFunction",
+                    description="A Function Tool that can search the web.",
+                    action_group_executor=bedrock.CfnAgent.ActionGroupExecutorProperty(
+                        lambda_=search_lambda_arn,
+                    ),
+                    api_schema=bedrock.CfnAgent.APISchemaProperty(
+                        payload=search_schema_def,
+                        ),
+                    )
                     ],
         )
 
@@ -201,4 +208,5 @@ class BedrockStack(Stack):
             value=agent_alias,
             export_name="BedrockAgentAlias"
         )
+
         

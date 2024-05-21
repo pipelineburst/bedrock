@@ -29,7 +29,6 @@
           `city` string,
           `vendor` string,
           `4g volte traffic` double,
-          `vendor` string,
           `4g packet data traffic gb` bigint,
           `4g_user_throughput_dl_mbps` double
         )
@@ -37,7 +36,6 @@
         FIELDS TERMINATED BY ',' 
         LINES TERMINATED BY '\n'
         STORED AS TEXTFILE
-        LOCATION 's3://data-lake-u4jedu3/data-set/';  
         </athena_schema>
       </athena_schemas>
 

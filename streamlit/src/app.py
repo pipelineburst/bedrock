@@ -11,13 +11,13 @@ st.set_page_config(page_title="SaaS Agent", page_icon=":robot_face:", layout="wi
 st.title("Bedrock Agent")
 st.header("The agent has access to the baseline test data set")
 
-prompt = st.text_input("Please enter your query?", max_chars=500)
+prompt = st.text_input(label="Please enter your query?", max_chars=500)
 
 # Display a primary button for submission
-submit_button = st.button("Submit", type="primary")
+submit_button = st.button(label="Submit", type="primary")
 
 # Display a button to end the session
-end_session_button = st.button("End Session")
+end_session_button = st.button(label="End Session", type="secondary")
 
 # Sidebar for general information
 description = """

@@ -1,5 +1,6 @@
 import boto3
 from time import sleep
+import os
 
 # Initialize the Athena client
 athena_client = boto3.client('athena')
@@ -15,7 +16,8 @@ def handler(event, context):
 
         print("the received QUERY:",  query)
         
-        s3_output = 's3://athena-destination-133f68a4e67d3d4'  # our athena destination s3 bucket
+        # Adding the athena destination s3 bucket we need for the boto athena client call
+        s3_output = 's3://' + os.environ["ATHENA_DEST_BUCKET"]
 
         # Execute the query and wait for completion
         execution_id = execute_athena_query(query, s3_output)

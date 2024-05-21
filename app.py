@@ -10,7 +10,7 @@ from stacks.streamlit_stack import StreamlitStack
 app = cdk.App()
 
 dict1 = {
-    "region": 'us-west-2',
+    "region": 'us-east-1',
     "account_id": '851725325557'
 }
 
@@ -35,7 +35,8 @@ stack3 = BedrockStack(app, "BedrockAgentStack",
             termination_protection=False, 
             tags={"project":"bedrock-agents"},
             dict1=dict1,
-            athena_lambda_arn=stack2.athena_lambda_arn
+            athena_lambda_arn=stack2.athena_lambda_arn,
+            search_lambda_arn=stack2.search_lambda_arn
 )
 
 stack4 = StreamlitStack(app, "StreamlitStack",

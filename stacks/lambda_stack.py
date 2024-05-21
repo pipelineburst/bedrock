@@ -4,6 +4,7 @@ from aws_cdk import (
     CfnOutput,
     aws_lambda as _lambda,
     aws_iam as iam,
+    Fn as Fn,
 )
 from constructs import Construct
 import os
@@ -22,7 +23,7 @@ class LambdaStack(Stack):
             code=_lambda.Code.from_asset('lambda'),
             handler='lambda_athena.handler',
             timeout=Duration.seconds(60),
-            memory_size=1024,
+            memory_size=4048,
         )
 
         # Export the lambda arn
@@ -63,6 +64,13 @@ class LambdaStack(Stack):
         
         ### Define a Lambda function for the agent to seatch the web
 
+        # Create a Lambda layer
+        layer = _lambda.LayerVersion(
+            self, 'py-lib-layer',
+            code=_lambda.Code.from_asset('assets/lambda_layer_with_py_deps.zip'),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+        )
+
         # Defines an AWS Lambda function
         search_lambda = _lambda.Function(
             self, 'search-lambda-action',
@@ -70,8 +78,11 @@ class LambdaStack(Stack):
             code=_lambda.Code.from_asset("lambda"),
             handler='lambda_search.handler',
             timeout=Duration.seconds(60),
-            memory_size=1024,
+            memory_size=4048,
         )
+        
+        # Add the layer to the search lambda function
+        search_lambda.add_layers(layer)
 
         # Export the lambda arn
         CfnOutput(self, "LambdaSearchForBedrockAgent",
@@ -108,3 +119,7 @@ class LambdaStack(Stack):
             action="lambda:InvokeFunction",
             source_arn=f"arn:aws:bedrock:{dict1['region']}:{dict1['account_id']}:agent/*"
         )
+        
+        # Create add athena destination bucket name as environment variables to the athena lambda function
+        athena_dest_bucket = Fn.import_value("AthenaDestinationBucketName")
+        athena_lambda.add_environment("ATHENA_DEST_BUCKET", athena_dest_bucket)
