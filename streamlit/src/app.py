@@ -3,6 +3,7 @@ import streamlit as st
 import json
 import pandas as pd
 from PIL import Image
+import os
 
 # Streamlit browser tab page configuration
 st.set_page_config(page_title="SaaS Agent", page_icon=":robot_face:", layout="wide")
@@ -11,7 +12,7 @@ st.set_page_config(page_title="SaaS Agent", page_icon=":robot_face:", layout="wi
 st.title("Bedrock Agent")
 st.header("The agent has access to the baseline test data set")
 
-prompt = st.text_input(label="Please enter your query?", max_chars=500)
+prompt = st.text_input(label="Please enter your question", max_chars=500)
 
 # Display a primary button for submission
 submit_button = st.button(label="Submit", type="primary")
@@ -29,12 +30,31 @@ with st.sidebar:
 
 st.sidebar.title("Agentic GenAI")
 
-st.sidebar.subheader(":rocket: Suggested sample questions:")
+st.sidebar.subheader(":sparkles: Notice and FYI")
 
 st.sidebar.markdown('''
-                    Provide a table with the city by city breakdown of the total number of cells and total 4g packet data traffic and  the total 4g volte traffic. \n
-                    How many cells in the city of Makkah_City have 4g utilization higher than 80% ? \n
-                    What is the aggregated total 4g volte traffic and total downlink data traffic for Makkah_City \n
+                    Baseline dataset shape = 286,296 x 20\n
+                    Model Name = Claude 3 Haiku \n
+                    Max response size = 25kB
+                    ''')
+
+region = os.environ["AWS_REGION"]
+agentID = os.environ["BEDROCK_AGENT_ID"]
+agentAlias = os.environ["BEDROCK_AGENT_ALIAS"][-10:]
+
+st.sidebar.write("Region: ",region)
+st.sidebar.write("Agent ID: ", agentID)
+st.sidebar.write("Agent Alias: ", agentAlias)
+
+st.sidebar.subheader(":rocket: Sample questions:")
+
+st.sidebar.markdown('''
+                    Show me all KPIs I can query. \n
+                    Provide the first 5 rows of all the KPIs I can query. \n
+                    Give me two tables. the first table with total cells by governorate. the second table with total cells by vendor. \n
+                    Get me a table with the city by city breakdown of the total number of cells and total 4g packet data traffic and the total 4g volte traffic. \n
+                    Show me how many cells in the city of Makkah_City have 4g utilization higher than 80%. \n
+                    Show me the aggregated total 4g volte traffic and total downlink data traffic for Makkah_City \n
                     Provide a table with the city by city breakdown of total 4g volte traffic. \n
                     Get me a city by city breakdown of average 4g volte traffic. \n
                     Tell me how many cells are of vendor Ericsson ? \n
@@ -46,18 +66,10 @@ st.sidebar.markdown('''
                     Provide a table with the top 10 cells by highest 4g volte traffic ? \n
                     What is the standard deviation of 4g volte traffic across all cells ?
                         ''')
-st.sidebar.subheader(":sparkles: Notice and FYI")
-st.sidebar.markdown('''
-                    Max response size = 25kB \n
-                    Baseline dataset shape = 20 x 286,296 \n
-                    LLM = Claude Haiku
-                    ''')
 
 # Session State Management to build up the conversation history
 if 'history' not in st.session_state:
     st.session_state['history'] = []
-
-st.sidebar.subheader(":100: Trace Data")
 
 # Function to parse and format response
 def format_response(response_body):
@@ -79,31 +91,14 @@ if submit_button and prompt:
         "sessionId": "MYSESSION",
         "question": prompt
     }
-    response = agenthelper.lambda_handler(event, None)
     
-    try:
-        # Parse the JSON string
-        if response and 'body' in response and response['body']:
-            response_data = json.loads(response['body'])
-            print("TRACE & RESPONSE DATA ->  ", response_data)
-        else:
-            print("Invalid or empty response received")
-    except json.JSONDecodeError as e:
-        print("JSON decoding error:", e)
-        response_data = None 
-    
-    try:
-        # Extract the response and trace data
-        all_data = format_response(response_data['response'])
-        the_response = response_data['trace_data']
+    try: 
+        the_response = agenthelper.agent_handler(event, None)
     except:
-        all_data = "..." 
-        the_response = "Apologies, but an error occurred. Please rerun the application" 
+        the_response = "Apologies, but an error occurred. Please rerun the application"
 
-    # Use trace_data and formatted_response as needed
-    st.sidebar.text_area("", value=all_data, height=300)
+    # Add the conversation to the history
     st.session_state['history'].append({"question": prompt, "answer": the_response})
-    st.session_state['trace_data'] = the_response
     
 if end_session_button:
     st.session_state['history'].append({"question": "Session Ended", "answer": "Thank you for using the Agent!"})
@@ -112,7 +107,7 @@ if end_session_button:
         "question": "placeholder to end session",
         "endSession": True
     }
-    agenthelper.lambda_handler(event, None)
+    agenthelper.agent_handler(event, None)
     st.session_state['history'].clear()
 
 # Display conversation history

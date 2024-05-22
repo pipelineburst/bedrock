@@ -5,3 +5,6 @@ maxUploadSize = 2000
 
 [browser]
 gatherUsageStats = false
+
+[logger]
+level = "debug"

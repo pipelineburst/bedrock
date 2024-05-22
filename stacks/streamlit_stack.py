@@ -241,20 +241,6 @@ class StreamlitStack(Stack):
             True
         )
 
-        # Adding an ingress rule to the security group to allow inbound NFS traffic
-        
-        security_group = load_balanced_service.service.connections.security_groups[0]
-        security_group.add_ingress_rule(
-            ec2.Peer.ipv4(vpc.vpc_cidr_block), 
-            ec2.Port.tcp(2049), 
-            description="Allow inbound NFS traffic"
-            )
-        security_group.add_ingress_rule(
-            ec2.Peer.ipv4("0.0.0.0/0"),
-            ec2.Port.tcp(2049),
-            description="Allow inbound NFS traffic from anywhere"            
-            )
-
         # Was the dev argument passed in as part of the cdk deploy? 
         # If so then an EFS file system will be created and mounted into the task definition for easy access to the Streamlit application code.
 
@@ -303,6 +289,20 @@ class StreamlitStack(Stack):
                 block_devices=[ec2.BlockDevice(device_name="/dev/xvda", volume=ec2.BlockDeviceVolume.ebs(8, encrypted=True))],
                 user_data=ec2.UserData.for_linux()
             )
+
+            # Adding an ingress rule to the security group to allow inbound NFS traffic
+            security_group = load_balanced_service.service.connections.security_groups[0]
+            security_group.add_ingress_rule(
+                ec2.Peer.ipv4(vpc.vpc_cidr_block), 
+                ec2.Port.tcp(2049), 
+                description="Allow inbound NFS traffic"
+                )
+            security_group.add_ingress_rule(
+                ec2.Peer.ipv4("0.0.0.0/0"),
+                ec2.Port.tcp(2049),
+                description="Allow inbound NFS traffic from anywhere"            
+                )
+
 
         # Was the email address argument passed in as part of the cdk deploy? If so then authentication will be applied to the ALB
         email_address = self.node.try_get_context('email_address')

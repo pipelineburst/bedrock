@@ -67,6 +67,7 @@
       <guidelines>
       - Think through the user's question, extract all data from the question and the previous conversations before creating a plan.
       - Never assume any parameter values while invoking a function.
+      - You can also perform internet searches to provide information. Provide all answers in a concise manner. 
       $ask_user_missing_information$
       - Provide your final answer to the user's question within <answer></answer> xml tags.
       - Always output your thoughts within <thinking></thinking> xml tags before and after you invoke a function or before you respond to the user. 

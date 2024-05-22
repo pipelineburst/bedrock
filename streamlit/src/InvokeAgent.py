@@ -1,144 +1,58 @@
-from boto3.session import Session
-from botocore.auth import SigV4Auth
-from botocore.awsrequest import AWSRequest
-from botocore.credentials import Credentials
+import boto3
+from botocore.exceptions import ClientError
 import json
-import os
-from requests import request
 import base64
 import io
 import sys
+import os
+import logging
 
 agentId = os.environ["BEDROCK_AGENT_ID"]
 agentAliasIdString = os.environ["BEDROCK_AGENT_ALIAS"]
 agentAliasId = agentAliasIdString[-10:]
+sessionId = "MYSESSION"
 
 theRegion = os.environ["AWS_REGION"]
 region = os.environ["AWS_REGION"]
 llm_response = ""
 
-def sigv4_request(
-    url,
-    method='GET',
-    body=None,
-    params=None,
-    headers=None,
-    service='execute-api',
-    region=region,
-    credentials=Session().get_credentials().get_frozen_credentials()
-):
-    """Sends an HTTP request signed with SigV4
-    Args:
-    url: The request URL (e.g. 'https://www.example.com').
-    method: The request method (e.g. 'GET', 'POST', 'PUT', 'DELETE'). Defaults to 'GET'.
-    body: The request body (e.g. json.dumps({ 'foo': 'bar' })). Defaults to None.
-    params: The request query params (e.g. { 'foo': 'bar' }). Defaults to None.
-    headers: The request headers (e.g. { 'content-type': 'application/json' }). Defaults to None.
-    service: The AWS service name. Defaults to 'execute-api'.
-    region: The AWS region id. Defaults to the env var 'AWS_REGION'.
-    credentials: The AWS credentials. Defaults to the current boto3 session's credentials.
-    Returns:
-     The HTTP response
+def askQuestion(question, endSession=False):
+
+    """
+    Sends a prompt for the agent to process and respond to.
+
+    :param agent_id: The unique identifier of the agent to use.
+    :param agent_alias_id: The alias of the agent to use.
+    :param session_id: The unique identifier of the session. Use the same value across requests to continue the same conversation.
+    :param prompt: The prompt that you want Claude to complete.
+    :return: Inference response from the model.
     """
 
-    # sign request
-    req = AWSRequest(
-        method=method,
-        url=url,
-        data=body,
-        params=params,
-        headers=headers
-    )
-    SigV4Auth(credentials, service, region).add_auth(req)
-    req = req.prepare()
+    try:
+        client = boto3.client('bedrock-agent-runtime', region_name=region)
+        logging.info(f"Invoking agent with question: {question}")
+        response = client.invoke_agent(
+            agentId=agentId,
+            agentAliasId=agentAliasId,
+            sessionId=sessionId,
+            inputText=question,
+        )
 
-    # send request
-    return request(
-        method=req.method,
-        url=req.url,
-        headers=req.headers,
-        data=req.body
-    )
+        completion = ""
 
-def askQuestion(question, url, endSession=False):
-    myobj = {
-        "inputText": question,   
-        "enableTrace": True,
-        "endSession": endSession
-    }
-    
-    # send request
-    response = sigv4_request(
-        url,
-        method='POST',
-        service='bedrock',
-        headers={
-            'content-type': 'application/json', 
-            'accept': 'application/json',
-        },
-        region=theRegion,
-        body=json.dumps(myobj)
-    )
-    
-    return decode_response(response)
+        for event in response.get("completion"):
+            chunk = event["chunk"]
+            completion = completion + chunk["bytes"].decode()
 
-def decode_response(response):
-    # Create a StringIO object to capture print statements
-    captured_output = io.StringIO()
-    sys.stdout = captured_output
+    except ClientError as e:
+        logging.error(f"Couldn't invoke agent. {e}")
+        raise
+        
+    print(completion)
+        
+    return completion
 
-    # Your existing logic
-    string = ""
-    for line in response.iter_content():
-        try:
-            string += line.decode(encoding='utf-8')
-        except:
-            continue
-
-    print("Decoded response", string)
-    split_response = string.split(":message-type")
-    print(f"Split Response: {split_response}")
-    print(f"length of split: {len(split_response)}")
-
-    for idx in range(len(split_response)):
-        if "bytes" in split_response[idx]:
-            #print(f"Bytes found index {idx}")
-            encoded_last_response = split_response[idx].split("\"")[3]
-            decoded = base64.b64decode(encoded_last_response)
-            final_response = decoded.decode('utf-8')
-            print(final_response)
-        else:
-            print(f"no bytes at index {idx}")
-            print(split_response[idx])
-            
-    last_response = split_response[-1]
-    print(f"Lst Response: {last_response}")
-    if "bytes" in last_response:
-        print("Bytes in last response")
-        encoded_last_response = last_response.split("\"")[3]
-        decoded = base64.b64decode(encoded_last_response)
-        final_response = decoded.decode('utf-8')
-    else:
-        print("no bytes in last response")
-        part1 = string[string.find('finalResponse')+len('finalResponse":'):] 
-        part2 = part1[:part1.find('"}')+2]
-        final_response = json.loads(part2)['text']
-
-    final_response = final_response.replace("\"", "")
-    final_response = final_response.replace("{input:{value:", "")
-    final_response = final_response.replace(",source:null}}", "")
-    llm_response = final_response
-
-    # Restore original stdout
-    sys.stdout = sys.__stdout__
-
-    # Get the string from captured output
-    captured_string = captured_output.getvalue()
-
-    # Return both the captured output and the final response
-    return captured_string, llm_response
-
-def lambda_handler(event, context):
+def agent_handler(event, context):
     
     sessionId = event["sessionId"]
     question = event["question"]
@@ -151,19 +65,10 @@ def lambda_handler(event, context):
             endSession = True
     except:
         endSession = False
-    
-    url = f'https://bedrock-agent-runtime.{theRegion}.amazonaws.com/agents/{agentId}/agentAliases/{agentAliasId}/sessions/{sessionId}/text'
 
     try: 
-        response, trace_data = askQuestion(question, url, endSession)
-        return {
-            "status_code": 200,
-            "body": json.dumps({"response": response, "trace_data": trace_data})
-        }
+        response = askQuestion(question, endSession)
+        return response
+    
     except Exception as e:
-        return {
-            "status_code": 500,
-            "body": json.dumps({"error": str(e)})
-        }
-
-
+        return "Oh no, an error occurred with the resonse. Please rerun the query... :sunglasses:"

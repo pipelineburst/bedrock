@@ -122,7 +122,7 @@ class BedrockStack(Stack):
             orc_temp_def = file.read()
 
         # Define advanced prompt - pre-processing template - override pre-processing template defaults
-        with open('assets/agent_preprocessing_template', 'r') as file:
+        with open('assets/agent_preprocessing_template.json', 'r') as file:
             pre_temp_def = file.read()
 
         # Create a bedrock agent        
@@ -146,7 +146,20 @@ class BedrockStack(Stack):
                         top_k=250,
                         top_p=1,
                         )
-                    )
+                    ),
+                    bedrock.CfnAgent.PromptConfigurationProperty(
+                        base_prompt_template=pre_temp_def,
+                        prompt_type="PRE_PROCESSING",
+                        prompt_state="ENABLED",
+                        prompt_creation_mode="OVERRIDDEN",
+                        inference_configuration=bedrock.CfnAgent.InferenceConfigurationProperty(
+                            maximum_length=2048,
+                            stop_sequences=["⏎⏎Human:"],
+                            temperature=0,
+                            top_k=250,
+                            top_p=1,
+                            )
+                        )
                 ]),
             action_groups=[bedrock.CfnAgent.AgentActionGroupProperty(
                     action_group_name="AthenaToolFunction",

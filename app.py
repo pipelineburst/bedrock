@@ -10,7 +10,7 @@ from stacks.streamlit_stack import StreamlitStack
 app = cdk.App()
 
 dict1 = {
-    "region": 'us-east-1',
+    "region": 'us-west-2',
     "account_id": '851725325557'
 }
 
