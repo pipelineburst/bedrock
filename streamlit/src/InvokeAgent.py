@@ -1,9 +1,5 @@
 import boto3
 from botocore.exceptions import ClientError
-import json
-import base64
-import io
-import sys
 import os
 import logging
 
@@ -54,6 +50,13 @@ def askQuestion(question, endSession=False):
 
 def agent_handler(event, context):
     
+    """
+    Takes in an event body containint the prompt and returns the response from the agent.
+
+    :param event: A dict that contains the prompt and session id.
+    :param context: The context of the prompt.
+    """
+    
     sessionId = event["sessionId"]
     question = event["question"]
     endSession = False
@@ -71,4 +74,4 @@ def agent_handler(event, context):
         return response
     
     except Exception as e:
-        return "Oh no, an error occurred with the resonse. Please rerun the query... :sunglasses:"
+        return "Oh no, an error occurred with the resonse. Please rerun the query... :sparkles:"

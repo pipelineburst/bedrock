@@ -71,7 +71,7 @@ class KnowledgebaseStack(Stack):
             True
         )
     
-        # Upload data from asset to S3 bucket
+        # Upload data from asset to S3 bucket - with the prefix for incoming "raw" data
         s3d.BucketDeployment(self, "DataDeployment",
             sources=[s3d.Source.asset("assets/data-set/")],
             destination_bucket=data_bucket,
@@ -98,112 +98,176 @@ class KnowledgebaseStack(Stack):
         glue_database_name = "data_set_db"
         
         glue.CfnDatabase(self, "DataSetDatabase", catalog_id=self.account, database_input=glue.CfnDatabase.DatabaseInputProperty(name=glue_database_name))
-        
-        # Create Glue Crawler Role
-        crawler_role = iam.Role(self, "CrawlerRole",
+
+        # Create Glue role for the etl job
+        glue_job_role = iam.Role(self, "GlueEtlJobRole",
             assumed_by=iam.ServicePrincipal("glue.amazonaws.com"),
-            inline_policies={
-                "CrawlerPolicy": iam.PolicyDocument(statements=[
-                    iam.PolicyStatement(
-                        actions=[
-                            "glue:Get*",
-                            "glue:List*",
-                            "glue:Query*",
-                            "glue:Search*",
-                            "glue:Batch*",
-                            "glue:Create*",
-                            "glue:CheckSchemaVersionValidity",
-                            "glue:Import*",
-                            "glue:Put*",
-                            "glue:UpdateTable"
-                        ],
-                        resources=[
-                            "arn:aws:glue:{}:{}:catalog".format(self.region, self.account),
-                            "arn:aws:glue:{}:{}:database/{}".format(self.region, self.account, glue_database_name),
-                            "arn:aws:glue:{}:{}:table/{}/*".format(self.region, self.account, glue_database_name)
-                        ]
-                    ),
-                    iam.PolicyStatement(
-                        actions=[
-                            "s3:PutObject",
-                            "s3:GetObject",
-                            "s3:PutBucketLogging",
-                            "s3:ListBucket",
-                            "s3:PutBucketVersioning"
-                        ],
-                        resources=[
-                            data_bucket.bucket_arn,
-                            data_bucket.bucket_arn + "/*"
-                        ]
-                    ),
-                    iam.PolicyStatement(
-                        actions=[
-                            "s3:PutObject",
-                            "s3:GetObject",
-                            "s3:PutBucketLogging",
-                            "s3:ListBucket",
-                            "s3:PutBucketVersioning"
-                        ],
-                        resources=[
-                            data_bucket.bucket_arn,
-                            data_bucket.bucket_arn + "/*"
-                        ]
-                    ),
-                    iam.PolicyStatement(
-                        actions=[
-                            "logs:CreateLogGroup",
-                            "logs:CreateLogStream",
-                            "logs:PutLogEvents",
-                            "logs:AssociateKmsKey"
-                        ],
-                        resources=[
-                            "arn:aws:logs:*:*:log-group:/aws-glue/*"
-                        ]
-                    )                    
-                ])
-            }
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AWSGlueServiceRole"),
+                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3FullAccess")
+            ]
         )
 
-        # Create Glue Crawler
-        dataset_crawler = glue.CfnCrawler(self, "DataSetCrawler",
-            name="DataSetCrawler",
-            database_name=glue_database_name,
-            role=crawler_role.role_arn,
-            targets=glue.CfnCrawler.TargetsProperty(
-            s3_targets=[
-                glue.CfnCrawler.S3TargetProperty(path="s3://{}/data-set/".format(data_bucket.bucket_name))
-            ]
+        # Grant read and write access to the data bucket
+        data_bucket.grant_read_write(glue_job_role)
+        
+        # Upload glue etl script from asset to S3 bucket. The script will be used by the Glue etl job, creates compressed parquet files, creates a schema, and creates a glue db table partitions
+        s3d.BucketDeployment(self, "GlueJobScript",
+            sources=[s3d.Source.asset("assets/glue/")],
+            destination_bucket=data_bucket,
+            destination_key_prefix="scripts/"
+        )
+
+        # Create a Glue etl job that processes the data set
+        etl_job = glue.CfnJob(self, "DataSetETLJob",
+            role=glue_job_role.role_arn,
+            command=glue.CfnJob.JobCommandProperty(
+            name="glueetl",
+            script_location="s3://{}/scripts/etl.py".format(data_bucket.bucket_name),
+            python_version="3",
             ),
-            schedule=glue.CfnCrawler.ScheduleProperty(
-            schedule_expression="cron(0 0 * * ? *)"  # Run once a day at midnight
-            )
+            default_arguments={
+            "--job-bookmark-option": "job-bookmark-enable",
+            "--enable-metrics": "true",
+            "--enable-observability-metrics": "true",
+            "--enable-continuous-cloudwatch-log": "true",
+            "--customer-driver-env-vars": f"CUSTOMER_BUCKET_NAME={data_bucket.bucket_name}",
+            "--customer-executor-env-vars": f"CUSTOMER_BUCKET_NAME={data_bucket.bucket_name}"
+            },
+            glue_version="4.0",
+            max_retries=0,
+            number_of_workers=2,
+            worker_type="G.1X"
         )
         
-        # Trigger the crawer on create so we have a table to query before the first scheduled run
-        # Define the input dictionary content for the start_crawler AwsSdk call
-        onCreateCrawlerParams = {
-                    "Name": dataset_crawler.name
-        }
+        # Create a Glue schedule for the etl job that processes the data set with the bookmark option enabled
+        glue_schedule = glue.CfnTrigger(self, "DataSetETLSchedule",
+            name="DataSetETLSchedule",
+            description="Schedule for the DataSetETLJob to discover and process incoming data",
+            type="SCHEDULED",
+            actions=[glue.CfnTrigger.ActionProperty(
+                job_name=etl_job.ref,
+                arguments={
+                    "--job-bookmark-option": "job-bookmark-enable",
+                    "--enable-metrics": "true",
+                    "--enable-observability-metrics": "true",
+                    "--enable-continuous-cloudwatch-log": "true",
+                    "--customer-driver-env-vars": f"CUSTOMER_BUCKET_NAME={data_bucket.bucket_name}",
+                    "--customer-executor-env-vars": f"CUSTOMER_BUCKET_NAME={data_bucket.bucket_name}"
+                }
+            )],
+            schedule="cron(0 1 * * ? *)"  # Run once a day at 1am
+        )
+        
+        # # This is an alternative way to parse and update the glue db with a crawler
+        # # Either use the glue etl job or use the crawler to update the glue db
+        # # Create Glue Crawler Role
+        # crawler_role = iam.Role(self, "CrawlerRole",
+        #     assumed_by=iam.ServicePrincipal("glue.amazonaws.com"),
+        #     inline_policies={
+        #         "CrawlerPolicy": iam.PolicyDocument(statements=[
+        #             iam.PolicyStatement(
+        #                 actions=[
+        #                     "glue:Get*",
+        #                     "glue:List*",
+        #                     "glue:Query*",
+        #                     "glue:Search*",
+        #                     "glue:Batch*",
+        #                     "glue:Create*",
+        #                     "glue:CheckSchemaVersionValidity",
+        #                     "glue:Import*",
+        #                     "glue:Put*",
+        #                     "glue:UpdateTable*",
+        #                     "glue:UpdateDatabase*",
+        #                     "glue:UpdatePartition*",
+        #                 ],
+        #                 resources=[
+        #                     "arn:aws:glue:{}:{}:catalog".format(self.region, self.account),
+        #                     "arn:aws:glue:{}:{}:database/{}".format(self.region, self.account, glue_database_name),
+        #                     "arn:aws:glue:{}:{}:table/{}/*".format(self.region, self.account, glue_database_name)
+        #                 ]
+        #             ),
+        #             iam.PolicyStatement(
+        #                 actions=[
+        #                     "s3:PutObject",
+        #                     "s3:GetObject",
+        #                     "s3:PutBucketLogging",
+        #                     "s3:ListBucket",
+        #                     "s3:PutBucketVersioning"
+        #                 ],
+        #                 resources=[
+        #                     data_bucket.bucket_arn,
+        #                     data_bucket.bucket_arn + "/*"
+        #                 ]
+        #             ),
+        #             iam.PolicyStatement(
+        #                 actions=[
+        #                     "s3:PutObject",
+        #                     "s3:GetObject",
+        #                     "s3:PutBucketLogging",
+        #                     "s3:ListBucket",
+        #                     "s3:PutBucketVersioning"
+        #                 ],
+        #                 resources=[
+        #                     data_bucket.bucket_arn,
+        #                     data_bucket.bucket_arn + "/*"
+        #                 ]
+        #             ),
+        #             iam.PolicyStatement(
+        #                 actions=[
+        #                     "logs:CreateLogGroup",
+        #                     "logs:CreateLogStream",
+        #                     "logs:PutLogEvents",
+        #                     "logs:AssociateKmsKey"
+        #                 ],
+        #                 resources=[
+        #                     "arn:aws:logs:*:*:log-group:/aws-glue/*"
+        #                 ]
+        #             )                    
+        #         ])
+        #     }
+        # )
 
-        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
-        crawler_cr = cr.AwsCustomResource(self, "GlueCrawlerCustomResource",
-            on_create=cr.AwsSdkCall(
-                service="Glue",
-                action="startCrawler",
-                parameters=onCreateCrawlerParams,
-                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")),
-            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
-                resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
-                )
-            )
+        # # Create Glue Crawler
+        # dataset_crawler = glue.CfnCrawler(self, "DataSetProcCrawler",
+        #     name="DataSetProcCrawler",
+        #     database_name=glue_database_name,
+        #     role=crawler_role.role_arn,
+        #     targets=glue.CfnCrawler.TargetsProperty(
+        #     s3_targets=[
+        #         glue.CfnCrawler.S3TargetProperty(path="s3://{}/data-proc/".format(data_bucket.bucket_name))
+        #     ]
+        #     ),
+        #     schedule=glue.CfnCrawler.ScheduleProperty(
+        #     schedule_expression="cron(0 0 * * ? *)"  # Run once a day at midnight
+        #     )
+        # )
+        
+        # # Trigger the crawer on create so we have a table to query before the first scheduled run
+        # # Define the input dictionary content for the start_crawler AwsSdk call
+        # onCreateCrawlerParams = {
+        #             "Name": dataset_crawler.name
+        # }
+
+        # # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
+        # crawler_cr = cr.AwsCustomResource(self, "GlueCrawlerCustomResource",
+        #     on_create=cr.AwsSdkCall(
+        #         service="Glue",
+        #         action="startCrawler",
+        #         parameters=onCreateCrawlerParams,
+        #         physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")),
+        #     policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+        #         resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+        #         )
+        #     )
      
-        # Define IAM permission policy for the custom resource    
-        crawler_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
-            effect=iam.Effect.ALLOW,
-            actions=["glue:StartCrawler", "glue:ListCrawlers", "iam:CreateServiceLinkedRole"],
-            resources=["*"],
-            )
-        )        
+        # # Define IAM permission policy for the custom resource    
+        # crawler_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+        #     effect=iam.Effect.ALLOW,
+        #     actions=["glue:StartCrawler", "glue:ListCrawlers", "iam:CreateServiceLinkedRole"],
+        #     resources=["*"],
+        #     )
+        # )        
         
         ### Create Athena resources
         

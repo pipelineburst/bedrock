@@ -33,7 +33,9 @@ st.sidebar.title("Agentic GenAI")
 st.sidebar.subheader(":sparkles: Notice and FYI")
 
 st.sidebar.markdown('''
-                    Baseline dataset shape = 286,296 x 20\n
+                    Baseline dataset = 45M records as 280k x 20 x 8\n
+                    Data granularity = Day level\n
+                    Data periods = 10-17 Feb 2024\n
                     Model Name = Claude 3 Haiku \n
                     Max response size = 25kB
                     ''')
@@ -51,7 +53,9 @@ st.sidebar.subheader(":rocket: Sample questions:")
 st.sidebar.markdown('''
                     Show me all KPIs I can query. \n
                     Provide the first 5 rows of all the KPIs I can query. \n
-                    Give me two tables. the first table with total cells by governorate. the second table with total cells by vendor. \n
+                    What is the total 4g volte traffic by date\n
+                    What is the total 4g volte traffic by date for 10 Feb and 11 Feb\n
+                    Give me a table with total cells by governorate and the total cells by vendor. \n
                     Get me a table with the city by city breakdown of the total number of cells and total 4g packet data traffic and the total 4g volte traffic. \n
                     Show me how many cells in the city of Makkah_City have 4g utilization higher than 80%. \n
                     Show me the aggregated total 4g volte traffic and total downlink data traffic for Makkah_City \n

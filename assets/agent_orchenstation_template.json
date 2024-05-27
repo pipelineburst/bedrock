@@ -24,13 +24,14 @@
       
       <athena_schemas>
         <athena_schema>
-        CREATE EXTERNAL TABLE data_set_db.data_set (
-          `4g cell name` string,
+        CREATE EXTERNAL TABLE data_set_db.data_proc (
+          `4g_cell_name` string,
+          `date` string,
           `city` string,
           `vendor` string,
-          `4g volte traffic` double,
-          `4g packet data traffic gb` bigint,
-          `4g_user_throughput_dl_mbps` double
+          `4g_volte_traffic` float,
+          `4g_packet_data_traffic_gb` float,
+          `4g_user_throughput_dl_mbps` float
         )
         ROW FORMAT DELIMITED 
         FIELDS TERMINATED BY ',' 
@@ -41,24 +42,38 @@
 
       You must wrap all column names with the \" character.
       Use Amazon Athena SQL math functions where possible. Make sure that you use only Amazon Athena supported SQL statements, functions, and operators.
+      The data set is stored in the data_proc_db.data_proc table in the Amazon Athena database.
+      Amazon Athena column names are often described as KPIs by users. 
       Here are examples of Amazon Athena queries <athena_examples>.
       
       <athena_examples>
 
         <athena_example>
-          SELECT * FROM data_set_db.data_set WHERE \"4g volte traffic\" >= 30 AND \"4g_user_throughput_dl_mbps\" > 40 AND \"city\" = 'Rural' AND \"vendor\" = 'Ericsson';  
+          SELECT * FROM data_set_db.data_proc WHERE \"4g_volte_traffic\" >= 30 AND \"4g_user_throughput_dl_mbps\" > 40 AND \"city\" = 'Rural' AND \"vendor\" = 'Ericsson';  
         </athena_example>
         
         <athena_example>
-          SELECT * FROM data_set_db.data_set WHERE \"vendor\" = 'Ericsson';
+          SELECT * FROM data_set_db.data_proc WHERE \"vendor\" = 'Ericsson';
         </athena_example>
       
         <athena_example>
-          SELECT STDDEV(\"4g volte traffic\") FROM data_set_db.data_set;
+          SELECT STDDEV(\"4g_volte_traffic\") FROM data_set_db.data_proc;
         </athena_example>
 
         <athena_example>
-        SELECT \"4g cell name\", \"4g volte traffic\" FROM data_set_db.data_set ORDER BY \"4g volte traffic\" DESC LIMIT 10;
+        SELECT \"4g_cell_name\", \"4g_volte_traffic\" FROM data_set_db.data_proc ORDER BY \"4g_volte_traffic\" DESC LIMIT 10;
+        </athena_example>
+
+        <athena_example>
+        SELECT * FROM data_set_db.data_proc LIMIT 5
+        </athena_example>
+
+        <athena_example>
+        SELECT  \"date\",  COUNT(DISTINCT \"4g cell name\") AS \"total_cells\" FROM data_set_db.data_proc GROUP BY \"date\" ORDER BY \"total_cells\" DESC
+        </athena_example>
+
+        <athena_example>
+        SELECT \"date\" AS \"date\", SUM(\"4g_volte_traffic\") AS \"total_4g_volte_traffic\" FROM data_set_db.data_proc GROUP BY \"date\" ORDER BY \"date\" ASC
         </athena_example>
 
       </athena_examples>
