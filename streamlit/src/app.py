@@ -48,28 +48,46 @@ st.sidebar.write("Region: ",region)
 st.sidebar.write("Agent ID: ", agentID)
 st.sidebar.write("Agent Alias: ", agentAlias)
 
-st.sidebar.subheader(":rocket: Sample questions:")
+st.sidebar.subheader(":rocket: One-Shot Sample Questions:")
 
 st.sidebar.markdown('''
                     Show me all KPIs I can query. \n
                     Provide the first 5 rows of all the KPIs I can query. \n
-                    What is the total 4g volte traffic by date\n
-                    What is the total 4g volte traffic by date for 10 Feb and 11 Feb\n
-                    Give me a table with total cells by governorate and the total cells by vendor. \n
+                    Provide a KPI overview by city. \n
+                    What is the total 4g volte traffic by date for 10 Feb and 11 Feb. \n
+                    Provide the data traffic by vendor. Add separate columns for each date. \n
+                    Give me a table with the cell count by city. Add separate columns for each vendor. \n
                     Get me a table with the city by city breakdown of the total number of cells and total 4g packet data traffic and the total 4g volte traffic. \n
+                    Use vendor, technology and city and provide the number of cells for each ranked from highest to lowest in a table. \n 
                     Show me how many cells in the city of Makkah_City have 4g utilization higher than 80%. \n
-                    Show me the aggregated total 4g volte traffic and total downlink data traffic for Makkah_City \n
                     Provide a table with the city by city breakdown of total 4g volte traffic. \n
-                    Get me a city by city breakdown of average 4g volte traffic. \n
-                    Tell me how many cells are of vendor Ericsson ? \n
+                    Show me the aggregated total 4g volte traffic and total downlink data traffic for Makkah_City. \n
+                    What is the total packet data traffic by city in GB and TB. \n
+                    Show me the total volte traffic by city in GB and Erlans. \n
+                    Show me the total volte traffic by city for Feb 11 in GB and Erlangs. \n
+                    Provide the top 10 list of cells in the city of Riyadh_City ranked by highest 4G drop packet rate. Exclude cells that have 4g data traffic of less than 10 GB. Add a column with the 4g data traffic. \n
+                    Provide a table with total number of cells by city and 3 other columns with the split per vendor Ericsson, Huawei and Nokia. \n
                     How many cells in the city of Makkah_City have 4g utilization higher than 80% ? \n
                     Show me how many cells have 4g user throughput larger than 150 ? \n
                     What is the total 4g volte traffic across all cells ? \n
-                    Provide the top 10 cities in descending order in terms of total number of cells with availability less than 80% \n
+                    Provide the top 10 cities in descending order in terms of total number of cells with availability less than 80%. \n
                     Show me aggregated data traffic and voice traffic across the vendors Ericsson, Huawei and Nokia. \n
-                    Provide a table with the top 10 cells by highest 4g volte traffic ? \n
-                    What is the standard deviation of 4g volte traffic across all cells ?
+                    Provide a table with the top 10 cells by highest 4g volte traffic. \n
+                    What is the standard deviation of 4g volte traffic across all cells ? \n 
+                    Provide a city breakdown of the average voice traffic and data traffic. Also add separate columns for the median and 25th percentile, 75th percentile. \n
+                    Identify the cell in Riyadh city that has the highest 4G packet drop rate and a packet traffic greater that 10 GB \n
                         ''')
+
+st.sidebar.subheader(":rocket: Few-Shot Sample Questions:")
+
+st.sidebar.markdown('''
+                    Provide the cell with the highest data traffic which is not rural, provide also voice traffic and city for that cell, all together in a table. \n
+                    Provide the data traffic and user throughput KPIs for that cell for the past 8 days in table format. Also add the vendor as a column.\n
+                    Provide the VoLTE Traffic by city and return the top 10 cities in descending order. Exclude the Rural city. \n
+                    Provide the average 4g volte traffic for those cities. Also provide the median as a separate column. \n
+                    Drill into the Riyadh_City and provide the top 10 cells by data traffic. \n
+                    Add the volte traffic KPIs to the result table \n
+                    ''')
 
 # Session State Management to build up the conversation history
 if 'history' not in st.session_state:
@@ -89,7 +107,7 @@ def format_response(response_body):
         # If response is not JSON, return as is
         return response_body
 
-# Handling user input and responses
+# Handling user input and responses. The session id should be unique for each conversation id and should not be hard coded as shown here.
 if submit_button and prompt:
     event = {
         "sessionId": "MYSESSION",
@@ -99,7 +117,7 @@ if submit_button and prompt:
     try: 
         the_response = agenthelper.agent_handler(event, None)
     except:
-        the_response = "Apologies, but an error occurred. Please rerun the application"
+        the_response = "Apologies, but an error occurred. Please adjust the question and rerun the query."
 
     # Add the conversation to the history
     st.session_state['history'].append({"question": prompt, "answer": the_response})

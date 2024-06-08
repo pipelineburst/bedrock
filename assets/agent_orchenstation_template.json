@@ -41,7 +41,8 @@
       </athena_schemas>
 
       You must wrap all column names with the \" character.
-      Use Amazon Athena SQL math functions where possible. Make sure that you use only Amazon Athena supported SQL statements, functions, and operators.
+      You must only use Amazon Athena SQL functions. Make sure that you use only Amazon Athena supported SQL statements, functions, and operators.
+      You must use the APPROX_PERCENTILE function to calculate the median and other percentiles.
       The data set is stored in the data_proc_db.data_proc table in the Amazon Athena database.
       Amazon Athena column names are often described as KPIs by users. 
       Here are examples of Amazon Athena queries <athena_examples>.
@@ -74,6 +75,14 @@
 
         <athena_example>
         SELECT \"date\" AS \"date\", SUM(\"4g_volte_traffic\") AS \"total_4g_volte_traffic\" FROM data_set_db.data_proc GROUP BY \"date\" ORDER BY \"date\" ASC
+        </athena_example>
+
+        <athena_example>
+        SELECT \"city\", AVG(\"4g_volte_traffic\") AS \"avg_4g_volte_traffic\", APPROX_PERCENTILE(\"4g_volte_traffic\", 0.5) AS \"median_4g_volte_traffic\" FROM data_set_db.data_proc WHERE \"city\" <> 'Rural' GROUP BY \"city\" ORDER BY \"avg_4g_volte_traffic\" DESC LIMIT 10
+        </athena_example>
+
+        <athena_example>
+        SELECT \"city\", APPROX_PERCENTILE(\"4g_volte_traffic\", 0.5) AS \"median_4g_volte_traffic\" FROM data_set_db.data_proc WHERE \"city\" <> 'Rural' GROUP BY \"city\" ORDER BY \"median_4g_volte_traffic\" DESC LIMIT 10
         </athena_example>
 
       </athena_examples>

@@ -12,7 +12,6 @@ from aws_cdk import (
     RemovalPolicy,
     CfnOutput,
 )
-import aws_cdk
 from cdk_nag import (
     NagPackSuppression,
     NagSuppressions
@@ -25,6 +24,12 @@ class StreamlitStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, dict1, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
+        # Create a unique string to create unique resource names
+        hash_base_string = (self.account + self.region)
+        hash_base_string = hash_base_string.encode("utf8")
+
+        ### 1. Create the ECS service for the Streamlit application
+
         # Creating the VPC for the ECS service
         vpc = ec2.Vpc(self, "CompanionVPC",
             ip_addresses=ec2.IpAddresses.cidr("10.0.0.0/16"),
@@ -33,11 +38,7 @@ class StreamlitStack(Stack):
             subnet_configuration=[ec2.SubnetConfiguration(name="public",subnet_type=ec2.SubnetType.PUBLIC,cidr_mask=24)]
         )
 
-        # Create a unique string to create unique resource names
-        hash_base_string = (self.account + self.region)
-        hash_base_string = hash_base_string.encode("utf8")
-
-        # Was the certificate argument been added as part of the cdk deploy? If so then a certification will be created for the load_balanced_service
+        # Was the certificate argument been added as part of the cdk deploy? If so then a certification will be created and attached to the alb
         acm_certificate_arn = self.node.try_get_context('acm_certificate_arn')
 
         # Use the ApplicationLoadBalancedFargateService L3 construct to create the application load balanced behind an ALB
@@ -53,22 +54,22 @@ class StreamlitStack(Stack):
             redirect_http=(True if acm_certificate_arn else False),
             load_balancer_name=("saas-companion-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
             task_image_options=ecs_patterns.ApplicationLoadBalancedTaskImageOptions(
-            # Builds and imports the container image directly from the local directory (requires Docker to be installed on the local machine)
-            image=ecs.ContainerImage.from_asset("streamlit"),
-            environment={
-                "STREAMLIT_SERVER_RUN_ON_SAVE": "true",
-                "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
-                "STREAMLIT_THEME_BASE": "light",
-                "STREAMLIT_THEME_TEXT_COLOR": "#00617F",
-                "STREAMLIT_THEME_FONT": "sans serif",
-                "STREAMLIT_THEME_BACKGROUND_COLOR": "#C1C6C8",
-                "STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR": "#ffffff",
-                "STREAMLIT_THEME_PRIMARY_COLOR": "#C1C6C8",
-                "BEDROCK_AGENT_ID": Fn.import_value("BedrockAgentID"),
-                "BEDROCK_AGENT_ALIAS": Fn.import_value("BedrockAgentAlias"),
-                "AWS_REGION": self.region,
-                "AWS_ACCOUNT_ID": self.account,
-            }
+            # Builds and imports the container image directly from the local directory (requires Docker to be installed on the environment executing cdk deploy)
+                image=ecs.ContainerImage.from_asset("streamlit"),
+                environment={
+                    "STREAMLIT_SERVER_RUN_ON_SAVE": "true",
+                    "STREAMLIT_BROWSER_GATHER_USAGE_STATS": "false",
+                    "STREAMLIT_THEME_BASE": "light",
+                    "STREAMLIT_THEME_TEXT_COLOR": "#00617F",
+                    "STREAMLIT_THEME_FONT": "sans serif",
+                    "STREAMLIT_THEME_BACKGROUND_COLOR": "#C1C6C8",
+                    "STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR": "#ffffff",
+                    "STREAMLIT_THEME_PRIMARY_COLOR": "#C1C6C8",
+                    "BEDROCK_AGENT_ID": Fn.import_value("BedrockAgentID"),
+                    "BEDROCK_AGENT_ALIAS": Fn.import_value("BedrockAgentAlias"),
+                    "AWS_REGION": self.region,
+                    "AWS_ACCOUNT_ID": self.account,
+                }
             )
         )   
 
@@ -79,7 +80,6 @@ class StreamlitStack(Stack):
         )
         
         # Adding the necessary permissions to the ECS task role to interact with the services
-        
         load_balanced_service.task_definition.add_to_task_role_policy(
             statement=iam.PolicyStatement(
                 actions=[
@@ -241,7 +241,9 @@ class StreamlitStack(Stack):
             True
         )
 
-        # Was the dev argument passed in as part of the cdk deploy? 
+        ### 2. Creating optinoal resources based on user context variables 
+
+        # OPTION: Was the "dev" variable passed in as part of the cdk deploy --context? 
         # If so then an EFS file system will be created and mounted into the task definition for easy access to the Streamlit application code.
 
         # Creating an EFS file system to help during the development phase. The EFS file system is then mounted into the task definition for easy access to the Streamlit application code.
@@ -304,7 +306,8 @@ class StreamlitStack(Stack):
                 )
 
 
-        # Was the email address argument passed in as part of the cdk deploy? If so then authentication will be applied to the ALB
+        # OPTION: Was the "email" variable passed in as part of the cdk deploy --context? 
+        # If so, then authentication will be applied to the ALB.
         email_address = self.node.try_get_context('email_address')
 
         if email_address:
@@ -316,13 +319,13 @@ class StreamlitStack(Stack):
             full_domain_name = ("https://" if acm_certificate_arn else "http://") + domain_name
 
             #Create a Cognito User Pool for user authentication
-            user_pool = cognito.UserPool(self, "NetworkAssistantUserPool",
+            user_pool = cognito.UserPool(self, "UserPool",
                 self_sign_up_enabled=False,
                 user_invitation=cognito.UserInvitationConfig(
-                    email_subject="New Dashboard Account",
-                    email_body="""Hi there,
+                    email_subject="New Account",
+                    email_body="""Hello,
                     
-                    You've been granted permission to use a dashboard:
+                    You've been granted permission to access a application:
                     """ + full_domain_name + """
 
                     Your username is '<b>{username}</b>' and your temporary password is <b>{####}</b>"""
@@ -339,7 +342,7 @@ class StreamlitStack(Stack):
             )
 
             #Create a Cognito User Pool Domain for the ALB to use for authentication
-            user_pool_domain = user_pool.add_domain("NetworkAssistantUserPoolDomain",
+            user_pool_domain = user_pool.add_domain("UserPoolDomain",
                 cognito_domain=cognito.CognitoDomainOptions(
                     domain_prefix="saas-acs-genai-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]
                 )

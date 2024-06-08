@@ -8,7 +8,7 @@ from aws_cdk import (
     aws_s3_deployment as s3d,
     aws_glue as glue,
     aws_athena as athena,
-    custom_resources as cr
+    custom_resources as cr,
 )
 from cdk_nag import (
     NagPackSuppression,
@@ -26,7 +26,7 @@ class KnowledgebaseStack(Stack):
         hash_base_string = (self.account + self.region)
         hash_base_string = hash_base_string.encode("utf8")
 
-        ### Create data-set resources
+        ### 1. Create data-set resources
         
         # Create S3 bucket for the data set
         data_bucket = s3.Bucket(self, "DataLake",
@@ -84,7 +84,7 @@ class KnowledgebaseStack(Stack):
             export_name="DataSetBucketName"
         )
 
-        ### Create glue resources
+        ### 2. Create glue resources
 
         # Create Glue Service Role
         glue_service_role = iam.Role(self, "GlueServiceRole",
@@ -120,11 +120,13 @@ class KnowledgebaseStack(Stack):
 
         # Create a Glue etl job that processes the data set
         etl_job = glue.CfnJob(self, "DataSetETLJob",
+            name="DataSetETLJob",
             role=glue_job_role.role_arn,
+            execution_class="FLEX",
             command=glue.CfnJob.JobCommandProperty(
-            name="glueetl",
-            script_location="s3://{}/scripts/etl.py".format(data_bucket.bucket_name),
-            python_version="3",
+                name="glueetl",
+                script_location="s3://{}/scripts/etl.py".format(data_bucket.bucket_name),
+                python_version="3",
             ),
             default_arguments={
             "--job-bookmark-option": "job-bookmark-enable",
@@ -136,7 +138,7 @@ class KnowledgebaseStack(Stack):
             },
             glue_version="4.0",
             max_retries=0,
-            number_of_workers=2,
+            number_of_workers=5,
             worker_type="G.1X"
         )
         
@@ -145,6 +147,7 @@ class KnowledgebaseStack(Stack):
             name="DataSetETLSchedule",
             description="Schedule for the DataSetETLJob to discover and process incoming data",
             type="SCHEDULED",
+            start_on_creation=True,
             actions=[glue.CfnTrigger.ActionProperty(
                 job_name=etl_job.ref,
                 arguments={
@@ -159,7 +162,31 @@ class KnowledgebaseStack(Stack):
             schedule="cron(0 1 * * ? *)"  # Run once a day at 1am
         )
         
-        # # This is an alternative way to parse and update the glue db with a crawler
+        # Create a custom resource to execute a Glue etl job run on create, so we dont have to wait until the first scheduled run
+        onCreateJobRunParams = {
+            "JobName": etl_job.name
+        }
+         
+        job_run_cr = cr.AwsCustomResource(self, "GlueJobRunCustomResource",
+            on_create=cr.AwsSdkCall(
+                service="Glue",
+                action="startJobRun",
+                parameters=onCreateJobRunParams,
+                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                ),
+            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+                )
+            )
+      
+        job_run_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=["glue:*", "iam:CreateServiceLinkedRole", "iam:PassRole"],
+            resources=["*"],
+            )
+        )  
+        
+        # # This is an alternative way to parse and update the glue db is to use a crawler
         # # Either use the glue etl job or use the crawler to update the glue db
         # # Create Glue Crawler Role
         # crawler_role = iam.Role(self, "CrawlerRole",
@@ -269,7 +296,7 @@ class KnowledgebaseStack(Stack):
         #     )
         # )        
         
-        ### Create Athena resources
+        ### 3. Create Athena resources
         
         # Create S3 athena destination bucket 
         athena_bucket = s3.Bucket(self, "AthenaDestination",
@@ -357,4 +384,47 @@ class KnowledgebaseStack(Stack):
                     )
                 )
             )
+        )
+        
+        # Export the athena workgroup name
+        CfnOutput(self, "AthenaWorkGroupName",
+            value=athena_workgroup.name,
+            export_name="AthenaWorkGroupName"
+        )
+
+        ### 4. Create knowledgebase resources
+        
+        # Create S3 bucket for the knowledgebase
+        kb_bucket = s3.Bucket(self, "Knowledgebase",
+            bucket_name=("knowledgebase-bucket-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            auto_delete_objects=True,
+            versioned=True,
+            removal_policy=RemovalPolicy.DESTROY,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            intelligent_tiering_configurations=[
+                s3.IntelligentTieringConfiguration(
+                name="my_s3_tiering",
+                archive_access_tier_time=Duration.days(90),
+                deep_archive_access_tier_time=Duration.days(180),
+                prefix="prefix",
+                tags=[s3.Tag(
+                    key="key",
+                    value="value"
+                )]
+             )],      
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    noncurrent_version_expiration=Duration.days(7)
+                )
+            ],
+        )
+
+        kb_bucket.grant_read_write(iam.ServicePrincipal("bedrock.amazonaws.com"))
+
+        # Export the athena destination bucket name
+        CfnOutput(self, "KnowledgebaseBucketName",
+            value=kb_bucket.bucket_name,
+            export_name="KnowledgebaseBucketName"
         )

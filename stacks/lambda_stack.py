@@ -7,14 +7,13 @@ from aws_cdk import (
     Fn as Fn,
 )
 from constructs import Construct
-import os
 
 class LambdaStack(Stack):
 
     def __init__(self, scope: Construct, id: str, dict1, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        ### Define a Lambda function for the agent to interact with Athena
+        ### 1. Define a Lambda function for the agent to interact with Athena
 
         # Defines an AWS Lambda function
         athena_lambda = _lambda.Function(
@@ -62,7 +61,14 @@ class LambdaStack(Stack):
             source_arn=f"arn:aws:bedrock:{dict1['region']}:{dict1['account_id']}:agent/*"
         )
         
-        ### Define a Lambda function for the agent to seatch the web
+        # Create athena environment variables for the athena lambda function
+        athena_dest_bucket = Fn.import_value("AthenaDestinationBucketName")
+        athena_lambda.add_environment("ATHENA_DEST_BUCKET", athena_dest_bucket)       
+        
+        athena_workgroup = Fn.import_value("AthenaWorkGroupName")
+        athena_lambda.add_environment("ATHENA_WORKGROUP", athena_workgroup) 
+        
+        ### 2. Define a Lambda function for the agent to search the web
 
         # Create a Lambda layer
         layer = _lambda.LayerVersion(
@@ -119,7 +125,4 @@ class LambdaStack(Stack):
             action="lambda:InvokeFunction",
             source_arn=f"arn:aws:bedrock:{dict1['region']}:{dict1['account_id']}:agent/*"
         )
-        
-        # Create add athena destination bucket name as environment variables to the athena lambda function
-        athena_dest_bucket = Fn.import_value("AthenaDestinationBucketName")
-        athena_lambda.add_environment("ATHENA_DEST_BUCKET", athena_dest_bucket)
+    

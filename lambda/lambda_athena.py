@@ -18,17 +18,27 @@ def handler(event, context):
         
         # Adding the athena destination s3 bucket we need for the boto athena client call
         s3_output = 's3://' + os.environ["ATHENA_DEST_BUCKET"]
+        wg_name = os.environ["ATHENA_WORKGROUP"]
 
         # Execute the query and wait for completion
-        execution_id = execute_athena_query(query, s3_output)
+        execution_id = execute_athena_query(query, s3_output, wg_name)
         result = get_query_results(execution_id)
 
         return result
 
-    def execute_athena_query(query, s3_output):
+    def execute_athena_query(query, s3_output, wg_name):
         response = athena_client.start_query_execution(
             QueryString=query,
-            ResultConfiguration={'OutputLocation': s3_output}
+            ResultConfiguration={
+                'OutputLocation': s3_output,
+                },
+            WorkGroup=wg_name,
+            ResultReuseConfiguration={
+                'ResultReuseByAgeConfiguration': {
+                    'Enabled': True,
+                    'MaxAgeInMinutes': 1440
+                    }
+                }
         )
         return response['QueryExecutionId']
 

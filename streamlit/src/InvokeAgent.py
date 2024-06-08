@@ -51,7 +51,7 @@ def askQuestion(question, endSession=False):
 def agent_handler(event, context):
     
     """
-    Takes in an event body containint the prompt and returns the response from the agent.
+    Takes in an event body containing the user prompt and returns the response from the agent.
 
     :param event: A dict that contains the prompt and session id.
     :param context: The context of the prompt.
@@ -74,4 +74,4 @@ def agent_handler(event, context):
         return response
     
     except Exception as e:
-        return "Oh no, an error occurred with the resonse. Please rerun the query... :sparkles:"
+        return "Oh no, an error occurred. Please adjust the question and re-submit... :sparkles:"
