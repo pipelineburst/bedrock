@@ -29,6 +29,22 @@ class BedrockStack(Stack):
         hash_base_string = hash_base_string.encode("utf8")
 
         ### 1. Create S3 bucket for the Agent schema assets
+
+        # Imporing and instantiating the access logs bucket so we can write the logs into it
+        access_logs_bucket = s3.Bucket.from_bucket_name(self, "AccessLogsBucketName", Fn.import_value("AccessLogsBucketName"))
+        # access_logs_bucket.add_to_resource_policy(
+        #     iam.PolicyStatement(
+        #         effect=iam.Effect.ALLOW,
+        #         actions=[
+        #             "logs:CreateLogStream", 
+        #             "logs:PutLogEvents"
+        #             ],
+        #         resources=[
+        #             Fn.import_value("AccessLogsBucketArn"),
+        #             Fn.import_value("AccessLogsBucketArn") + ":*"
+        #             ],
+        #     )
+        # )
         
         # Create S3 bucket for the OpenAPI action group schemas 
         schema_bucket = s3.Bucket(self, "schema-bucket",
@@ -39,6 +55,8 @@ class BedrockStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
+            server_access_logs_bucket=access_logs_bucket,
+            server_access_logs_prefix="schema-bucket-access-logs/",
             intelligent_tiering_configurations=[
                 s3.IntelligentTieringConfiguration(
                 name="my_s3_tiering",
@@ -66,18 +84,26 @@ class BedrockStack(Stack):
                 principals=[iam.ServicePrincipal("bedrock.amazonaws.com")],
                 )
             )
-
-        NagSuppressions.add_resource_suppressions(
-            schema_bucket,
-            [NagPackSuppression(id="BedrockAgentSolutions", reason="The bucket is not for production and should not require debug.")],
-            True
-        )
     
         # Upload schema from asset to S3 bucket
         s3d.BucketDeployment(self, "DataDeployment",
             sources=[s3d.Source.asset("assets/schema/")],
             destination_bucket=schema_bucket,
             destination_key_prefix="schema/"
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/ServiceRole',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by the Construct."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by the Construct.")],
+            True
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/Resource',
+            [NagPackSuppression(id="AwsSolutions-L1", reason="Lambda is owned by AWS construct")],
+            True
         )
         
         # Export the schema bucket name
@@ -88,14 +114,8 @@ class BedrockStack(Stack):
 
         # Create a bedrock agent execution role (aka agent resource role) with permissions to interact with the services. The role name must follow a specific format.
         bedrock_agent_role = iam.Role(self, 'bedrock-agent-role',
-            role_name='AmazonBedrockExecutionRoleForAgents_KIUEYHSVDR',
+            role_name=f'AmazonBedrockExecutionRoleForAgents_' + str(hashlib.sha384(hash_base_string).hexdigest())[:15],
             assumed_by=iam.ServicePrincipal('bedrock.amazonaws.com'),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonBedrockFullAccess'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('AWSLambda_FullAccess'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonS3FullAccess'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('CloudWatchLogsFullAccess'),                
-            ],
         )
         
         CfnOutput(self, "BedrockAgentRoleArn",
@@ -103,14 +123,81 @@ class BedrockStack(Stack):
             export_name="BedrockAgentRoleArn"
         )
 
-        # Add iam resource to the bedrock agent
+        # Add model invocation inline permissions to the bedrock agent execution role
+        bedrock_agent_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:InvokeModel", 
+                    "bedrock:InvokeModelEndpoint", 
+                    "bedrock:InvokeModelEndpointAsync"
+                ],
+                resources=[
+                    "arn:aws:bedrock:{}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0".format(self.region)
+                ]
+                ,
+            )
+        )
+        
+        # Add S3 access inline permissions to the bedrock agent execution role to write logs and access the data buckets
         bedrock_agent_role.add_to_policy(
             iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
-            actions=["bedrock:InvokeModel", "bedrock:InvokeModelEndpoint", "bedrock:InvokeModelEndpointAsync"],
-            resources=["*"],
+            actions=[
+                    "s3:GetBucketLocation",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:ListBucketMultipartUploads",
+                    "s3:ListMultipartUploadParts",
+                    "s3:AbortMultipartUpload",
+                    "s3:CreateBucket",
+                    "s3:PutObject",
+                    "s3:PutBucketLogging",
+                    "s3:PutBucketVersioning",
+                    "s3:PutBucketNotification",
+                ],
+            resources=[
+                    schema_bucket.bucket_arn,
+                    f"{schema_bucket.bucket_arn}/*",
+                    f"arn:aws:s3:::{Fn.import_value('DataSetBucketName')}",
+                    f"arn:aws:s3:::{Fn.import_value('DataSetBucketName')}/*",
+                    Fn.import_value('DataSetBucketArn'),
+                    f"{Fn.import_value('DataSetBucketArn')}/*",
+                    ],
+            )
+        ) 
+        
+        # Add knowledgebase opensearch serverless inline permissions to the bedrock agent execution role      
+        bedrock_agent_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["aoss:APIAccessAll"],
+                resources=["*"],
             )
         )
+        
+        # Add lambda inline permissions to the bedrock agent execution role      
+        bedrock_agent_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "lambda:InvokeFunction",
+                    "lambda:GetFunction"
+                    ],
+                resources=[
+                    Fn.import_value('LambdaAthenaForBedrockAgent'),
+                    Fn.import_value('LambdaSearchForBedrockAgent')
+                    ],
+            )
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/bedrock-agent-role/DefaultPolicy/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM5", reason="Role is controlled to services, and actions where limited service API calls required. Where wildcards are used, these are prefixed with resources partial or complete ARNs.")],
+            True
+        )
+
         ### 2. Creating the agent for bedrock
 
         # Add instructions for the bedrock agent
@@ -132,7 +219,11 @@ class BedrockStack(Stack):
         with open('assets/agent_orchenstation_template.json', 'r') as file:
             orc_temp_def = file.read()
 
-        # Create a bedrock agent        
+        # Define advanced prompt - knowledgebase template - override knowledgebase template defaults
+        with open('assets/agent_kb_template.txt', 'r') as file:
+            kb_temp_def = file.read()
+
+        # Create a bedrock agent with action groups       
         bedrock_agent = bedrock.CfnAgent(self, 'bedrock-agent',
             agent_name='saas-acs-bedrock-agent',
             description="This is a bedrock agent that can be invoked by calling the bedrock agent alias and agent id.",
@@ -155,9 +246,23 @@ class BedrockStack(Stack):
                             top_p=1,
                             )
                         ),
+                    # removing the pre-processing as it adds latency to the agent; typically about 5 seconds, as it results in a bedrock model invocation. See logs.
                     bedrock.CfnAgent.PromptConfigurationProperty(
                         base_prompt_template=pre_temp_def,
                         prompt_type="PRE_PROCESSING",
+                        prompt_state="DISABLED",
+                        prompt_creation_mode="OVERRIDDEN",
+                        inference_configuration=bedrock.CfnAgent.InferenceConfigurationProperty(
+                            maximum_length=2048,
+                            stop_sequences=["⏎⏎Human:"],
+                            temperature=0,
+                            top_k=250,
+                            top_p=1,
+                            )
+                        ),
+                    bedrock.CfnAgent.PromptConfigurationProperty(
+                        base_prompt_template=kb_temp_def,
+                        prompt_type="KNOWLEDGE_BASE_RESPONSE_GENERATION",
                         prompt_state="ENABLED",
                         prompt_creation_mode="OVERRIDDEN",
                         inference_configuration=bedrock.CfnAgent.InferenceConfigurationProperty(
@@ -203,6 +308,8 @@ class BedrockStack(Stack):
             export_name="BedrockAgentModelName"
         )        
 
+        self.agent_arn = bedrock_agent.ref
+
         ### 3. Create an alias for the bedrock agent
 
         # Create an alias for the bedrock agent        
@@ -239,6 +346,8 @@ class BedrockStack(Stack):
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
+            server_access_logs_bucket=access_logs_bucket,
+            server_access_logs_prefix="model-invocation-bucket-access-logs/",
             lifecycle_rules=[
                 s3.LifecycleRule(
                     noncurrent_version_expiration=Duration.days(14)
@@ -250,17 +359,13 @@ class BedrockStack(Stack):
         add_s3_policy = model_invocation_bucket.add_to_resource_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                actions=["s3:PutObject"],
+                actions=[
+                    "s3:PutObject"
+                ],
                 resources=[model_invocation_bucket.arn_for_objects("*")],
                 principals=[iam.ServicePrincipal("bedrock.amazonaws.com")],
                 )
             )
-
-        NagSuppressions.add_resource_suppressions(
-            model_invocation_bucket,
-            [NagPackSuppression(id="BedrockAgentSolutions", reason="The bucket is not for production and should not require debug.")],
-            True
-        )
         
         # Create a Cloudwatch log group for model invocation logs
         model_log_group = logs.LogGroup(self, "model-log-group",
@@ -268,6 +373,50 @@ class BedrockStack(Stack):
             log_group_class=logs.LogGroupClass.STANDARD,
             retention=logs.RetentionDays.ONE_MONTH,
             removal_policy=RemovalPolicy.DESTROY
+        )
+
+        # Create a dedicated role with permissions to write logs to cloudwatch logs.
+        invocation_logging_role = iam.Role(self, 'invocation-logs-role',
+            role_name=("InvocationLogsRole-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            assumed_by=iam.ServicePrincipal('bedrock.amazonaws.com'),
+        )
+
+        # Add permission to log role to write logs to cloudwatch
+        invocation_logging_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                ],
+                resources=[
+                    model_log_group.log_group_arn,
+                ]
+                ,
+            )
+        )
+        
+        # Add permission to log role to write large log objects to S3
+        invocation_logging_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "S3:PutObject"
+                ],
+                resources=[
+                    model_invocation_bucket.bucket_arn,
+                    model_invocation_bucket.bucket_arn + "/*"
+                ]
+                ,
+            )
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/invocation-logs-role/DefaultPolicy/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM5", reason="Role is controlled to services, and actions where limited service API calls required. Where wildcards are used, these are prefixed with resources partial or complete ARNs.")],
+            True
         )
         
         # Custom resource to enable model invocation logging, as cloudformation does not support this feature at this time
@@ -280,7 +429,7 @@ class BedrockStack(Stack):
                         "keyPrefix": "invocation-logs"
                     },
                     "logGroupName": model_log_group.log_group_name,
-                    "roleArn": bedrock_agent_role.role_arn
+                    "roleArn": invocation_logging_role.role_arn
                 },
                 "embeddingDataDeliveryEnabled": False,
                 "imageDataDeliveryEnabled": False,
@@ -304,7 +453,82 @@ class BedrockStack(Stack):
         # Define IAM permission policy for the custom resource    
         model_logging_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
-            actions=["bedrock:*", "iam:CreateServiceLinkedRole", "iam:PassRole"],
-            resources=["*"],
+            actions=[
+                "bedrock:PutModelInvocationLoggingConfiguration", 
+                "iam:CreateServiceLinkedRole", 
+                "iam:PassRole"
+            ],
+            resources=[
+                "*"
+            ],
             )
         )  
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/ModelLoggingCustomResource/CustomResourcePolicy/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by Custom Resource."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+            True
+        )
+        
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/AWS679f53fac002430cb0da5b7982bd2287/ServiceRole',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Contains a resouce wildecard for bedrock as this is a global setting."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Contains a resouce wildecard for bedrock as this is a global setting.")],
+            True
+        )
+
+        ### 5. Enable Guardrails for Amazon Bedrock
+                
+        # Create a guardrail configuration for the bedrock agent
+        cfn_guardrail = bedrock.CfnGuardrail(self, "CfnGuardrail",
+            name=("guardrail-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            description="Guardrail configuration for the bedrock agent",
+            blocked_input_messaging="I'm sorry, I can't accept your prompt, as your prompt been blocked buy Guardrails.",
+            blocked_outputs_messaging="I'm sorry, I can't answer that, as the response has been blocked buy Guardrails.",
+            # Filter strength for incoming user prompts and outgoing agent responses
+            content_policy_config=bedrock.CfnGuardrail.ContentPolicyConfigProperty(
+                filters_config=[
+                    bedrock.CfnGuardrail.ContentFilterConfigProperty(
+                        input_strength="NONE",
+                        output_strength="NONE",
+                        type="PROMPT_ATTACK"
+                    ),
+                    bedrock.CfnGuardrail.ContentFilterConfigProperty(
+                        input_strength="HIGH",
+                        output_strength="HIGH",
+                        type="MISCONDUCT"
+                    ),
+                    bedrock.CfnGuardrail.ContentFilterConfigProperty(
+                        input_strength="HIGH",
+                        output_strength="HIGH",
+                        type="INSULTS"
+                    ),
+                    bedrock.CfnGuardrail.ContentFilterConfigProperty(
+                        input_strength="HIGH",
+                        output_strength="HIGH",
+                        type="HATE"
+                    ),
+                    bedrock.CfnGuardrail.ContentFilterConfigProperty(
+                        input_strength="HIGH",
+                        output_strength="HIGH",
+                        type="SEXUAL"
+                    ),
+                    bedrock.CfnGuardrail.ContentFilterConfigProperty(
+                        input_strength="HIGH",
+                        output_strength="HIGH",
+                        type="VIOLENCE"
+                    )                    
+                ]
+            )
+        )
+        
+        # Create a Guardrail version
+        cfn_guardrail_version = bedrock.CfnGuardrailVersion(self, "MyCfnGuardrailVersion",
+            guardrail_identifier=cfn_guardrail.attr_guardrail_id,
+            description="This is the deployed version of the guardrail configuration",
+        )
+        
+        # Associate the Guardrail version with the agent
+        # Pass
+        # Leaving it blank as this is not supported in the current version of the CDK / Cloudformation... would need a custom resource to do this

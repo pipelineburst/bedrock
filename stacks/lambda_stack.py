@@ -6,6 +6,10 @@ from aws_cdk import (
     aws_iam as iam,
     Fn as Fn,
 )
+from cdk_nag import (
+    NagPackSuppression,
+    NagSuppressions
+)
 from constructs import Construct
 
 class LambdaStack(Stack):
@@ -34,31 +38,99 @@ class LambdaStack(Stack):
         self.athena_lambda_arn = athena_lambda.function_arn
 
         # Adding Lambda execution role permissions for the services lambda will interact with.
-        add_execution_policy = athena_lambda.add_to_role_policy(
+        athena_lambda.add_to_role_policy(
             iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
-            actions=["bedrock:*", "athena:*", "s3:*"],
+            actions=[
+                    "athena:BatchGetQueryExecution",
+                    "athena:CancelQueryExecution",
+                    "athena:GetCatalogs",
+                    "athena:GetExecutionEngine",
+                    "athena:GetExecutionEngines",
+                    "athena:GetNamespace",
+                    "athena:GetNamespaces",
+                    "athena:GetQueryExecution",
+                    "athena:GetQueryExecutions",
+                    "athena:GetQueryResults",
+                    "athena:GetQueryResultsStream",
+                    "athena:GetTable",
+                    "athena:GetTables",
+                    "athena:ListQueryExecutions",
+                    "athena:RunQuery",
+                    "athena:StartQueryExecution",
+                    "athena:StopQueryExecution",
+                    "athena:ListWorkGroups",
+                    "athena:ListEngineVersions",
+                    "athena:GetWorkGroup",
+                    "athena:GetDataCatalog",
+                    "athena:GetDatabase",
+                    "athena:GetTableMetadata",
+                    "athena:ListDataCatalogs",
+                    "athena:ListDatabases",
+                    "athena:ListTableMetadata",
+                ],
             resources=["*"],
             )
         )  
 
-        # Adding iam managed policies to the Lambda execution role
-        athena_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name('AmazonS3FullAccess')
+        athena_lambda.add_to_role_policy(
+            iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                    "s3:GetBucketLocation",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:ListBucketMultipartUploads",
+                    "s3:ListMultipartUploadParts",
+                    "s3:AbortMultipartUpload",
+                    "s3:CreateBucket",
+                    "s3:PutObject",
+                    "s3:PutBucketLogging",
+                    "s3:PutBucketVersioning",
+                    "s3:PutBucketNotification",
+                ],
+            resources=[
+                    f"arn:aws:s3:::{Fn.import_value('AthenaDestinationBucketName')}",
+                    f"arn:aws:s3:::{Fn.import_value('AthenaDestinationBucketName')}/*",
+                    Fn.import_value('DataSetBucketArn'),
+                    f"{Fn.import_value('DataSetBucketArn')}/*",
+                    ],
             )
-        athena_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name('AmazonAthenaFullAccess')
+        )  
+
+        athena_lambda.add_to_role_policy(
+            iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                    "glue:GetDatabase",
+                    "glue:GetDatabases",
+                    "glue:GetTable",
+                    "glue:GetTables",
+                    "glue:GetPartition",
+                    "glue:GetPartitions",
+                    "glue:BatchGetPartition"
+                ],
+            resources=[
+                    f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:catalog",
+                    f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:database/{Fn.import_value('GlueDatabaseName')}",
+                    f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:table/{Fn.import_value('GlueDatabaseName')}/*"
+                    ],
             )
-        athena_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name('AWSGlueConsoleFullAccess')
-            )     
+        )  
         
         # Add permissions to the Lambda function resource policy. You use a resource-based policy to allow an AWS service to invoke your function.
-        add_lambda_resource_policy = athena_lambda.add_permission(
+        athena_lambda.add_permission(
             "AllowBedrock",
             principal=iam.ServicePrincipal("bedrock.amazonaws.com"),
             action="lambda:InvokeFunction",
             source_arn=f"arn:aws:bedrock:{dict1['region']}:{dict1['account_id']}:agent/*"
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/LambdaStack/athena-lambda-action/ServiceRole',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by the Construct."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by the Construct.")],
+            True
         )
         
         # Create athena environment variables for the athena lambda function
@@ -98,26 +170,6 @@ class LambdaStack(Stack):
 
         self.search_lambda_arn = search_lambda.function_arn
 
-        # Adding Lambda execution role permissions for the services lambda will interact with.
-        add_execution_policy = search_lambda.add_to_role_policy(
-            iam.PolicyStatement(
-            effect=iam.Effect.ALLOW,
-            actions=["bedrock:*", "athena:*", "s3:*"],
-            resources=["*"],
-            )
-        )  
-
-        # Adding iam managed policies to the Lambda execution role
-        search_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name('AmazonS3FullAccess')
-            )
-        search_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name('AmazonAthenaFullAccess')
-            )
-        search_lambda.role.add_managed_policy(
-            iam.ManagedPolicy.from_aws_managed_policy_name('AWSGlueConsoleFullAccess')
-            )     
-        
         # Add permissions to the Lambda function resource policy. You use a resource-based policy to allow an AWS service to invoke your function.
         add_lambda_resource_policy = search_lambda.add_permission(
             "AllowBedrock",
@@ -126,3 +178,9 @@ class LambdaStack(Stack):
             source_arn=f"arn:aws:bedrock:{dict1['region']}:{dict1['account_id']}:agent/*"
         )
     
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/LambdaStack/search-lambda-action/ServiceRole',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by the Construct."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by the Construct.")],
+            True
+        )

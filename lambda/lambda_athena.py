@@ -11,7 +11,7 @@ def handler(event, context):
     def athena_query_handler(event):
         # Fetch parameters for the new fields
 
-        # Extracting the SQL query
+        # Extracting the SQL query. THe bedrock function call will pass the query in the request body
         query = event['requestBody']['content']['application/json']['properties'][0]['value']
 
         print("the received QUERY:",  query)
@@ -36,7 +36,7 @@ def handler(event, context):
             ResultReuseConfiguration={
                 'ResultReuseByAgeConfiguration': {
                     'Enabled': True,
-                    'MaxAgeInMinutes': 1440
+                    'MaxAgeInMinutes': 60
                     }
                 }
         )

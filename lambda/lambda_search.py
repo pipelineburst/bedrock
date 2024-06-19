@@ -70,7 +70,7 @@ def search_google(query):
 
 def handle_search(event):
     input_text = event.get('inputText', '')  # Extract 'inputText'
-
+    
     # Empty the /tmp directory before saving new files
     print("Emptying temporary directory...")
     empty_tmp_directory()

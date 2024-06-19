@@ -7,6 +7,9 @@ from aws_cdk import (
     aws_ecs as ecs,
     aws_ecs_patterns as ecs_patterns,
     aws_iam as iam,
+    aws_logs as logs,
+    aws_apigateway as apigw,
+    aws_lambda as _lambda,
     Duration as Duration,
     Fn as Fn,
     RemovalPolicy,
@@ -30,12 +33,25 @@ class StreamlitStack(Stack):
 
         ### 1. Create the ECS service for the Streamlit application
 
+        # Create a Cloudwatch log group for vpc flow logs
+        vpc_flow_log_group = logs.LogGroup(self, "vpc-flowlog-group",
+            log_group_name=("vpc-flowlog-group-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            log_group_class=logs.LogGroupClass.STANDARD,
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
         # Creating the VPC for the ECS service
         vpc = ec2.Vpc(self, "CompanionVPC",
             ip_addresses=ec2.IpAddresses.cidr("10.0.0.0/16"),
             max_azs=2,
             nat_gateway_subnets=None,
             subnet_configuration=[ec2.SubnetConfiguration(name="public",subnet_type=ec2.SubnetType.PUBLIC,cidr_mask=24)]
+        )
+        
+        vpc.add_flow_log("FlowLog",
+            destination=ec2.FlowLogDestination.to_cloud_watch_logs(log_group=vpc_flow_log_group),
+            traffic_type=ec2.FlowLogTrafficType.ALL
         )
 
         # Was the certificate argument been added as part of the cdk deploy? If so then a certification will be created and attached to the alb
@@ -133,7 +149,13 @@ class StreamlitStack(Stack):
         load_balanced_service.task_definition.add_to_task_role_policy(
             statement=iam.PolicyStatement(
                 actions=[
-                    "bedrock:*"
+                    "bedrock:*",
+                    "kms:DescribeKey",
+                    "iam:ListRoles",
+                    "ec2:DescribeVpcs",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeSecurityGroups",
+                    "iam:PassRole"
                 ],
                 resources=["*"]
             )
@@ -394,4 +416,153 @@ class StreamlitStack(Stack):
 
             load_balanced_service.load_balancer.connections.allow_to_any_ipv4(ec2.Port.tcp(443))
             
-            
+        ### 3. Creating an api gateway that web applications can access to invoke the agent
+        
+        # Create the lambda function that will be invoked by the API Gateway
+        agent_invocation_lambda = _lambda.Function(
+            self, 'agent-invocation-lambda',
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            code=_lambda.Code.from_asset('lambda'),
+            handler='agent_invocation.handler',
+            timeout=Duration.seconds(60),
+            memory_size=1024,
+            environment={
+                "BEDROCK_AGENT_ID": Fn.import_value("BedrockAgentID"),
+                "BEDROCK_AGENT_ALIAS": Fn.import_value("BedrockAgentAlias"),
+                "REGION": dict1['region'],
+            },
+            current_version_options=_lambda.VersionOptions(
+                removal_policy=RemovalPolicy.RETAIN,
+                provisioned_concurrent_executions=2
+                ),
+            )
+
+        # Define IAM permission policy for the Lambda function.  
+        agent_invocation_lambda.role.add_to_principal_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "iam:CreateServiceLinkedRole", 
+                "iam:PassRole", 
+                "iam:ListUsers",  
+                "iam:ListRoles", 
+                "kms:DescribeKey",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+                ],
+            resources=["*"],
+            )
+        )
+
+        # Define bedrock permission for the Lambda function. This function calls the Bedrock API to invoke the agent and must have the "bedrock" permissions. 
+        agent_invocation_lambda.role.add_to_principal_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                    "bedrock:InvokeAgent"
+                ],
+            resources=[
+                "*"
+                ],
+            )
+        )
+
+        # Export the lambda arn
+        CfnOutput(self, "LambdaAgentInvocationHandlerArn",
+            value=agent_invocation_lambda.function_arn,
+            export_name="LambdaAgentInvocationHandlerArn"
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/StreamlitStack/agent-invocation-lambda/ServiceRole',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by the Construct."), NagPackSuppression(id="AwsSolutions-IAM5", reason="The agent does need to invoke changing agents and the wildcard is needed to avoid unreasonable toil.")],
+            True
+        )
+
+        #Create an access log group for the API Gateway access logs
+        apigw_access_loggroup = logs.LogGroup(self, "apigw-log-group",
+            log_group_name=("apigw-access-log-group-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            log_group_class=logs.LogGroupClass.STANDARD,
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=RemovalPolicy.DESTROY
+        ) 
+
+        # Create a new API Gateway, as a public endpoint. Defines an API Gateway REST API with AWS Lambda proxy integration.
+        agent_apigw_endpoint = apigw.LambdaRestApi(
+            self, "agent_apigw_endpoint",
+            handler=agent_invocation_lambda,
+            description="This is the API Gateway endpoint that takes in a user prompt and retuns an agent response.",
+            cloud_watch_role=True,
+            deploy=True,
+            deploy_options=apigw.StageOptions(
+                stage_name="question",
+                logging_level=apigw.MethodLoggingLevel.INFO,
+                access_log_destination=apigw.LogGroupLogDestination(apigw_access_loggroup),
+                data_trace_enabled=True,
+                caching_enabled=False,
+                metrics_enabled=True,
+            ),
+            integration_options=apigw.LambdaIntegrationOptions(
+                timeout=Duration.seconds(29),
+            )
+        )
+
+        plan = apigw.UsagePlan(self, "BedrockUsagePlan",
+            name="BedrockUsagePlan",
+            description="This is the usage plan for the Bedrock API Gateway endpoint.",
+            quota=apigw.QuotaSettings(
+                limit=1000,
+                period=apigw.Period.DAY,
+                offset=0
+            ),
+            throttle=apigw.ThrottleSettings(
+                rate_limit=100,
+                burst_limit=50
+            ),
+            api_stages=[apigw.UsagePlanPerApiStage(
+                api=agent_apigw_endpoint,
+                stage=agent_apigw_endpoint.deployment_stage
+            )]
+        )
+        
+        # Create an API key for the API Gateway endpoint. Requester must add the x-api-key header with the key to gain access.
+        bedrock_api_key = apigw.ApiKey(self, "BedrockAPIKey",
+                api_key_name="BedrockAPIKey",
+                enabled=True,
+                description="This is the API key for the Bedrock API Gateway endpoint.",    
+            )
+        plan.add_api_key(bedrock_api_key)
+        
+        # Add the API key requirement to the method
+        agent_apigw_endpoint.root.add_method('POST', api_key_required=True)
+
+        # Adding documentation to the API Gateway endpoint
+        properties_json = '{"info":"This is the API Gateway endpoint that takes in a user prompt and retuns an agent response."}'
+
+        cfn_documentation_part = apigw.CfnDocumentationPart(self, "MyCfnDocumentationPart",
+            location=apigw.CfnDocumentationPart.LocationProperty(
+                type="API"
+            ),
+            properties=properties_json,
+            rest_api_id=agent_apigw_endpoint.rest_api_id
+        )
+        
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/StreamlitStack/agent_apigw_endpoint/Default',
+            [NagPackSuppression(id="AwsSolutions-APIG4", reason="This will need an authorizer and is in the backlog."), NagPackSuppression(id="AwsSolutions-COG4", reason="We may or not use a Cognito user pool authorizer..")],
+            True
+        )
+        
+        NagSuppressions.add_resource_suppressions(
+            agent_apigw_endpoint,
+            [NagPackSuppression(id="AwsSolutions-APIG2", reason="The REST API does not have request validation enabled but it should. Backlog item")],
+            True
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/StreamlitStack/agent_apigw_endpoint/CloudWatchRole/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="The service role permission for cloudwatch logs are handled by the Consttuct.")],
+            True
+        )

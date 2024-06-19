@@ -5,6 +5,10 @@ __pycache__
 .venv
 *.egg-info
 
+# Ingor some private assets
+data-set
+kb-docs
+
 # CDK asset staging directory
 .cdk.staging
 cdk.out
