@@ -4,10 +4,10 @@ import os
 import boto3
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
-from botocore.exceptions import BotoCoreError, ClientError
 from time import sleep
 
 def handler(event, context):
+    # 1. Defining the request body for the index and field creation
     host = os.environ["COLLECTION_ENDPOINT"]
     print(f"Collection Endpoint: " + host)
     index_name = os.environ["INDEX_NAME"]
@@ -49,7 +49,8 @@ def handler(event, context):
             }
         }
     }
-
+    
+    # 2. Obtaining AWS credentials and signing the AWS API request
     region = os.environ["REGION"]
     service = 'aoss'
     credentials = boto3.Session().get_credentials()

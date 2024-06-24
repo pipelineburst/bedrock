@@ -24,46 +24,9 @@ class AossStack(Stack):
         
         # Create a unique string to create unique resource names
         hash_base_string = (self.account + self.region)
-        hash_base_string = hash_base_string.encode("utf8")
-        
-        bedrock_role_arn = Fn.import_value("BedrockAgentRoleArn")
+        hash_base_string = hash_base_string.encode("utf8")    
 
-        # Create a bedrock knowledgebase role. Creating it here so we can reference it in the access policy for the opensearch serverless collection
-        bedrock_kb_role = iam.Role(self, 'bedrock-kb-role',
-            role_name=("bedrock-kb-role-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
-            assumed_by=iam.ServicePrincipal('bedrock.amazonaws.com'),
-            managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonBedrockFullAccess'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonOpenSearchServiceFullAccess'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonS3FullAccess'),
-                iam.ManagedPolicy.from_aws_managed_policy_name('CloudWatchLogsFullAccess'),
-            ],
-        )
-
-        # Add inline permissions to the bedrock knowledgebase execution role      
-        bedrock_kb_role.add_to_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=["aoss:APIAccessAll"],
-                resources=["*"],
-            )
-        )
-
-        NagSuppressions.add_resource_suppressions_by_path(
-            self,
-            '/AossStack/bedrock-kb-role/Resource',
-            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Premissive permissions required as per aoss documentation."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Premissive permissions required as per aoss documentation.")],
-            True
-        )
-        
-        bedrock_kb_role_arn = bedrock_kb_role.role_arn
-        
-        CfnOutput(self, "BedrockKbRoleArn",
-            value=bedrock_kb_role_arn,
-            export_name="BedrockKbRoleArn"
-        )        
-
-        ### 1. Create an opensearch serverless domain for the knowledgebase
+        ### 1. Create an opensearch serverless collection
         
         # Creating an opensearch serverless collection requires a security policy of type encryption. The policy must be a string and the resource contains the collections it is applied to.
         opensearch_serverless_encryption_policy = opensearchserverless.CfnSecurityPolicy(self, "OpenSearchServerlessEncryptionPolicy",
@@ -102,7 +65,46 @@ class AossStack(Stack):
             export_name="OpenSearchCollectionEndpoint"
         )
 
-        ### 2. Create a custom resource that creates a new index in the opensearch serverless collection
+        ### 2. Creating an IAM role and permissions that we will need later on
+        
+        bedrock_role_arn = Fn.import_value("BedrockAgentRoleArn")
+
+        # Create a bedrock knowledgebase role. Creating it here so we can reference it in the access policy for the opensearch serverless collection
+        bedrock_kb_role = iam.Role(self, 'bedrock-kb-role',
+            role_name=("bedrock-kb-role-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
+            assumed_by=iam.ServicePrincipal('bedrock.amazonaws.com'),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonBedrockFullAccess'),
+                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonOpenSearchServiceFullAccess'),
+                iam.ManagedPolicy.from_aws_managed_policy_name('AmazonS3FullAccess'),
+                iam.ManagedPolicy.from_aws_managed_policy_name('CloudWatchLogsFullAccess'),
+            ],
+        )
+
+        # Add inline permissions to the bedrock knowledgebase execution role      
+        bedrock_kb_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["aoss:APIAccessAll"],
+                resources=["*"],
+            )
+        )
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/AossStack/bedrock-kb-role/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Premissive permissions required as per aoss documentation."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Premissive permissions required as per aoss documentation.")],
+            True
+        )
+        
+        bedrock_kb_role_arn = bedrock_kb_role.role_arn
+        
+        CfnOutput(self, "BedrockKbRoleArn",
+            value=bedrock_kb_role_arn,
+            export_name="BedrockKbRoleArn"
+        )    
+
+        ### 3. Create a custom resource that creates a new index in the opensearch serverless collection
 
         # Define the index name
         index_name = "kb-docs"
@@ -147,7 +149,7 @@ class AossStack(Stack):
         # Add the layer to the search lambda function
         create_index_lambda.add_layers(layer)
         
-        # Finally we can create a data access policy for the collection that includes the lambda function that will create the index. The policy must be a string and the resource contains the collections it is applied to.
+        # Finally we can create a complete data access policy for the collection that also includes the lambda function that will create the index. The policy must be a string and the resource contains the collections it is applied to.
         opensearch_serverless_access_policy = opensearchserverless.CfnAccessPolicy(self, "OpenSearchServerlessAccessPolicy",
             name=f"data-policy-" + str(uuid.uuid4())[-6:],
             policy=f"[{{\"Description\":\"Access for bedrock\",\"Rules\":[{{\"ResourceType\":\"index\",\"Resource\":[\"index/*/*\"],\"Permission\":[\"aoss:*\"]}},{{\"ResourceType\":\"collection\",\"Resource\":[\"collection/*\"],\"Permission\":[\"aoss:*\"]}}],\"Principal\":[\"{bedrock_role_arn}\",\"{bedrock_kb_role_arn}\",\"{create_index_lambda.role.role_arn}\"]}}]",

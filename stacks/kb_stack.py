@@ -59,6 +59,11 @@ class KnowledgeBaseStack(Stack):
                 "owner": "saas"
                 }
         )
+
+        CfnOutput(self, "BedrockKbName",
+            value=bedrock_knowledge_base.name,
+            export_name="BedrockKbName"
+        )           
         
         # Create the data source for the bedrock knowledgebase. Chunking max tokens of 300 is bedrock's sensible default.
         kb_data_source = bedrock.CfnDataSource(self, "KbDataSource",
@@ -83,12 +88,67 @@ class KnowledgeBaseStack(Stack):
             )
         )
 
+        CfnOutput(self, "BedrockKbDataSourceName",
+            value=kb_data_source.name,
+            export_name="BedrockKbDataSourceName"
+        ) 
+
         # Only trigger the custom resource when the kb is completed    
         kb_data_source.node.add_dependency(bedrock_knowledge_base)
 
-        ### 2. Associate the knowdledebase with the agent
+        ## 2. Start ingestion job for the knowdledebase data source
         
-        # A bug prevents the use of the association "DRAFT because it doesn't exist", which is forced due to pattern matching in the bedrock-agent API 
+        # Could be triggered outside of AWS CDK as it is a long running job, which can cause issues when stack rollbacks occur
+
+        # Custom resource to start the data source synch job, aka the data ingestion job
+        # Define the parameters for the ingestion job. the boto3 client will create the correct PUT request to the bedrock-agent API
+        # This is an example of passing the params as a dictionary, although the direct API call uses a PUT to pass the params
+        dataSourceIngestionParams = {
+            "dataSourceId": kb_data_source.attr_data_source_id,
+            "knowledgeBaseId": bedrock_knowledge_base.attr_knowledge_base_id,
+        }
+
+        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
+        ingestion_job_cr = cr.AwsCustomResource(self, "IngestionCustomResource",
+            on_create=cr.AwsSdkCall(
+                service="bedrock-agent",
+                action="startIngestionJob",
+                parameters=dataSourceIngestionParams,
+                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                ),
+            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+                )
+            )
+     
+        # Define IAM permission policy for the custom resource    
+        ingestion_job_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=["bedrock:*", "iam:CreateServiceLinkedRole", "iam:PassRole"],
+            resources=["*"],
+            )
+        )  
+
+        # Only trigger the custom resource when the kb data source is created    
+        ingestion_job_cr.node.add_dependency(kb_data_source)
+        
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/KnowledgebaseStack/AWS679f53fac002430cb0da5b7982bd2287/ServiceRole',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by Custom Resource."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+            True
+        )
+        
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/KnowledgebaseStack/IngestionCustomResource/CustomResourcePolicy/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by Custom Resource."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+            True
+        )
+
+        # ## 3. Associate the knowdledebase with the agent
+        
+        # # A bug prevents the use of the association "Agent DRAFT version doesn't exist", which is forced due to pattern matching in the bedrock-agent API 
         
         # agent_id = Fn.import_value("BedrockAgentID")
 
@@ -105,7 +165,7 @@ class KnowledgeBaseStack(Stack):
         # }
 
         # # Define a custom resource to make an AwsSdk call to associate the knowledge base with the agent     
-        # agent_kb_cr = cr.AwsCustomResource(self, "AgentKbCustomResource",
+        # agent_kb_association_cr = cr.AwsCustomResource(self, "AgentKbCustomResource",
         #     on_create=cr.AwsSdkCall(
         #         service="bedrock-agent",
         #         action="updateAgentKnowledgeBase",
@@ -118,48 +178,30 @@ class KnowledgeBaseStack(Stack):
         #     )
      
         # # Define IAM permission policy for the custom resource    
-        # agent_kb_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+        # agent_kb_association_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
         #     effect=iam.Effect.ALLOW,
-        #     actions=["bedrock:*", "iam:CreateServiceLinkedRole", "iam:PassRole"],
+        #     actions=[
+        #         "bedrock:*", 
+        #         "iam:CreateServiceLinkedRole", 
+        #         "iam:PassRole"
+        #     ],
         #     resources=["*"],
         #     )
         # )  
 
-        # # Only trigger the custom resource when the kb is completed    
-        # agent_kb_cr.node.add_dependency(kb_data_source)
+        # NagSuppressions.add_resource_suppressions(
+        #     agent_kb_association_cr,
+        #     [NagPackSuppression(id="AwsSolutions-IAM5", reason="We support the use of wildcards. But a backlog item should be added to restrict the resources to the specific resources that the custom resource needs to access")],
+        #     True
+        # )
         
-        ### 3. Start ingestion job for the knowdledebase data source
-        
-        # Perhaps best hanlded outside of AWS CDK as it is a long running job
-
-        # # Custom resource to start the data source synch job, aka the data ingestion job
-        # # Define the parameters for the ingestion job. the boto3 client will create the correct PUT request to the bedrock-agent API
-        # # This is an example of passing the params as a dictionary, although the direct API call uses a PUT to pass the params
-        # dataSourceIngestionParams = {
-        #     "dataSourceId": kb_data_source.attr_data_source_id,
-        #     "knowledgeBaseId": bedrock_knowledge_base.attr_knowledge_base_id,
-        # }
-
-        # # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
-        # ingestion_job_cr = cr.AwsCustomResource(self, "IngestionCustomResource",
-        #     on_create=cr.AwsSdkCall(
-        #         service="bedrock-agent",
-        #         action="startIngestionJob",
-        #         parameters=dataSourceIngestionParams,
-        #         physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
-        #         ),
-        #     policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
-        #         resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
-        #         )
-        #     )
-     
-        # # Define IAM permission policy for the custom resource    
-        # ingestion_job_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
-        #     effect=iam.Effect.ALLOW,
-        #     actions=["bedrock:*", "iam:CreateServiceLinkedRole", "iam:PassRole"],
-        #     resources=["*"],
-        #     )
-        # )  
+        # NagSuppressions.add_resource_suppressions_by_path(
+        #     self,
+        #     '/KnowledgebaseStack/AWS679f53fac002430cb0da5b7982bd2287/ServiceRole',
+        #     [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by Custom Resource."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+        #     True
+        # )
 
         # # Only trigger the custom resource when the kb is completed    
-        # ingestion_job_cr.node.add_dependency(agent_kb_cr)
+        # agent_kb_association_cr.node.add_dependency(kb_data_source)
+        

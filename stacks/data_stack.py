@@ -151,7 +151,7 @@ class DataFoundationStack(Stack):
             export_name="GlueDatabaseName"
         )        
 
-        # Create KMS key for Glue job encryption configuration and allow cloudwatch logs to associate the key to the log group
+        # Create KMS key for Glue job encryption configuration and allow the cloudwatch logs service to associate the key to the log group
         glue_job_key = kms.Key(self, "GlueJobEncryptionKey",
             enable_key_rotation=True,
             enabled=True,

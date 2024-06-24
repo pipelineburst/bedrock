@@ -21,6 +21,9 @@ from cdk_nag import (
 )
 from constructs import Construct
 import hashlib
+import json
+
+import jsonschema
 
 class StreamlitStack(Stack):
 
@@ -359,18 +362,18 @@ class StreamlitStack(Stack):
 
             NagSuppressions.add_resource_suppressions(
                 user_pool,
-                [NagPackSuppression(id="AwsSolutions-COG2", reason="MFA is not required as a POC.")],
+                [NagPackSuppression(id="AwsSolutions-COG2", reason="MFA is not required for the prototype.")],
                 True
             )
 
-            #Create a Cognito User Pool Domain for the ALB to use for authentication
+            # Create a Cognito User Pool Domain for the ALB to use for authentication
             user_pool_domain = user_pool.add_domain("UserPoolDomain",
                 cognito_domain=cognito.CognitoDomainOptions(
                     domain_prefix="saas-acs-genai-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]
                 )
             )
 
-            #Create a Cognito User Pool Client for the ALB to use for authentication. This is required for the ALB to use the Cognito User Pool.
+            # Create a Cognito User Pool Client for the ALB to use for authentication. This is required for the ALB to use the Cognito User Pool.
             user_pool_client = user_pool.add_client("NetworkAssistantUserPoolClient",
                 o_auth=cognito.OAuthSettings(
                     scopes=[
@@ -385,7 +388,7 @@ class StreamlitStack(Stack):
                 generate_secret=True
             ) 
 
-            #Create a Cognito User Pool User based on the provided email address for the ALB to use for authentication. This is required for the ALB to use the Cognito User Pool. This user is the only user that will be able to access the ALB.
+            # Create a Cognito User Pool User based on the provided email address for the ALB to use for authentication. This is required for the ALB to use the Cognito User Pool. This user is the only user that will be able to access the ALB.
             cognito.CfnUserPoolUser(self, "UserPoolUser",
                 desired_delivery_mediums=["EMAIL"],
                 user_attributes=[cognito.CfnUserPoolUser.AttributeTypeProperty(
@@ -396,7 +399,7 @@ class StreamlitStack(Stack):
                 user_pool_id=user_pool.user_pool_id
             )
 
-            #Apply the Cognito User Pool to the ALB. This will cause the ALB to use the Cognito User Pool for authentication. This is required for the ALB to use the Cognito User Pool. This user is the only user that will be able to access the ALB.
+            # Apply the Cognito User Pool to the ALB. This will cause the ALB to use the Cognito User Pool for authentication. This is required for the ALB to use the Cognito User Pool. This user is the only user that will be able to access the ALB.
             load_balanced_service.listener.node.default_child.default_actions = [
                 {
                     "order": 1,
@@ -437,23 +440,6 @@ class StreamlitStack(Stack):
                 ),
             )
 
-        # Define IAM permission policy for the Lambda function.  
-        agent_invocation_lambda.role.add_to_principal_policy(iam.PolicyStatement(
-            effect=iam.Effect.ALLOW,
-            actions=[
-                "iam:CreateServiceLinkedRole", 
-                "iam:PassRole", 
-                "iam:ListUsers",  
-                "iam:ListRoles", 
-                "kms:DescribeKey",
-                "ec2:DescribeVpcs",
-                "ec2:DescribeSubnets",
-                "ec2:DescribeSecurityGroups",
-                ],
-            resources=["*"],
-            )
-        )
-
         # Define bedrock permission for the Lambda function. This function calls the Bedrock API to invoke the agent and must have the "bedrock" permissions. 
         agent_invocation_lambda.role.add_to_principal_policy(iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
@@ -475,11 +461,11 @@ class StreamlitStack(Stack):
         NagSuppressions.add_resource_suppressions_by_path(
             self,
             '/StreamlitStack/agent-invocation-lambda/ServiceRole',
-            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by the Construct."), NagPackSuppression(id="AwsSolutions-IAM5", reason="The agent does need to invoke changing agents and the wildcard is needed to avoid unreasonable toil.")],
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Policies are set by the Construct."), NagPackSuppression(id="AwsSolutions-IAM5", reason="The agent does need to invoke changing agents aliases and the wildcard is needed to avoid unreasonable toil.")],
             True
         )
 
-        #Create an access log group for the API Gateway access logs
+        # Create an access log group for the API Gateway access logs
         apigw_access_loggroup = logs.LogGroup(self, "apigw-log-group",
             log_group_name=("apigw-access-log-group-" + str(hashlib.sha384(hash_base_string).hexdigest())[:15]).lower(),
             log_group_class=logs.LogGroupClass.STANDARD,
@@ -488,12 +474,14 @@ class StreamlitStack(Stack):
         ) 
 
         # Create a new API Gateway, as a public endpoint. Defines an API Gateway REST API with AWS Lambda proxy integration.
-        agent_apigw_endpoint = apigw.LambdaRestApi(
-            self, "agent_apigw_endpoint",
+        agent_apigw_endpoint = apigw.LambdaRestApi(self, "agent_apigw_endpoint",
+            rest_api_name="agent_apigw_endpoint",
             handler=agent_invocation_lambda,
             description="This is the API Gateway endpoint that takes in a user prompt and retuns an agent response.",
             cloud_watch_role=True,
+            proxy=False,
             deploy=True,
+            endpoint_types=[apigw.EndpointType.EDGE],
             deploy_options=apigw.StageOptions(
                 stage_name="question",
                 logging_level=apigw.MethodLoggingLevel.INFO,
@@ -532,9 +520,35 @@ class StreamlitStack(Stack):
                 description="This is the API key for the Bedrock API Gateway endpoint.",    
             )
         plan.add_api_key(bedrock_api_key)
+
+        # Create request validator for the API Gateway endpoint
+        request_model = agent_apigw_endpoint.add_model("BrRequestValidatorModel",
+            content_type="application/json",
+            model_name="BrRequestValidatorModel",
+            description="This is the request validator model for the Bedrock API Gateway endpoint.",
+            schema=apigw.JsonSchema(
+                schema=apigw.JsonSchemaVersion.DRAFT4,
+                title="postRequestValidatorModel",
+                type=apigw.JsonSchemaType.OBJECT,
+                required=["sessionId", "userPrompt"],
+                properties={
+                    "sessionId": apigw.JsonSchema(type=apigw.JsonSchemaType.STRING, min_length=2, max_length=32),
+                    "userPrompt": apigw.JsonSchema(type=apigw.JsonSchemaType.STRING, min_length=1, max_length=500),
+                }
+            )
+        )
         
-        # Add the API key requirement to the method
-        agent_apigw_endpoint.root.add_method('POST', api_key_required=True)
+        # Add the POST method that references the request validator and sets the API key as required
+        agent_apigw_endpoint.root.add_method(
+            http_method='POST', 
+            api_key_required=True,
+            request_validator_options=apigw.RequestValidatorOptions(
+                request_validator_name="PostRequestValidator",
+                validate_request_body=True,
+                validate_request_parameters=False,
+            ),
+            request_models={"application/json": request_model},
+        )
 
         # Adding documentation to the API Gateway endpoint
         properties_json = '{"info":"This is the API Gateway endpoint that takes in a user prompt and retuns an agent response."}'
@@ -546,23 +560,16 @@ class StreamlitStack(Stack):
             properties=properties_json,
             rest_api_id=agent_apigw_endpoint.rest_api_id
         )
-        
-        NagSuppressions.add_resource_suppressions_by_path(
-            self,
-            '/StreamlitStack/agent_apigw_endpoint/Default',
-            [NagPackSuppression(id="AwsSolutions-APIG4", reason="This will need an authorizer and is in the backlog."), NagPackSuppression(id="AwsSolutions-COG4", reason="We may or not use a Cognito user pool authorizer..")],
-            True
-        )
-        
-        NagSuppressions.add_resource_suppressions(
-            agent_apigw_endpoint,
-            [NagPackSuppression(id="AwsSolutions-APIG2", reason="The REST API does not have request validation enabled but it should. Backlog item")],
-            True
-        )
 
         NagSuppressions.add_resource_suppressions_by_path(
             self,
             '/StreamlitStack/agent_apigw_endpoint/CloudWatchRole/Resource',
-            [NagPackSuppression(id="AwsSolutions-IAM4", reason="The service role permission for cloudwatch logs are handled by the Consttuct.")],
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="The service role permission for cloudwatch logs are handled by the LambdaRestApi Construct.")],
+            True
+        )
+
+        NagSuppressions.add_resource_suppressions(
+            agent_apigw_endpoint,
+            [NagPackSuppression(id="AwsSolutions-APIG2", reason="Request validation is in fact enabled."), NagPackSuppression(id="AwsSolutions-APIG4", reason="We do not need an authorizer at this point."), NagPackSuppression(id="AwsSolutions-COG4", reason="We may or not use a Cognito user pool authorizer.")],
             True
         )

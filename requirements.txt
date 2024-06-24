@@ -1,7 +1,6 @@
 aws-cdk-lib
 aws-cdk.lambda-layer-kubectl-v29
 boto3
-checkov
 constructs
 flake8
 gitpython

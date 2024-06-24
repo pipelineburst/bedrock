@@ -306,7 +306,12 @@ class BedrockStack(Stack):
         CfnOutput(self, "BedrockAgentModelName",
             value=bedrock_agent.foundation_model,
             export_name="BedrockAgentModelName"
-        )        
+        )
+        
+        CfnOutput(self, "BedrockAgentArn",
+            value=bedrock_agent.attr_agent_arn,
+            export_name="BedrockAgentArn"
+        )          
 
         self.agent_arn = bedrock_agent.ref
 
@@ -474,7 +479,7 @@ class BedrockStack(Stack):
         NagSuppressions.add_resource_suppressions_by_path(
             self,
             '/BedrockAgentStack/AWS679f53fac002430cb0da5b7982bd2287/ServiceRole',
-            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Contains a resouce wildecard for bedrock as this is a global setting."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Contains a resouce wildecard for bedrock as this is a global setting.")],
+            [NagPackSuppression(id="AwsSolutions-IAM4", reason="Contains a resouce wildecard for bedrock as this is a global setting."), NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
             True
         )
 
@@ -529,6 +534,56 @@ class BedrockStack(Stack):
             description="This is the deployed version of the guardrail configuration",
         )
         
-        # Associate the Guardrail version with the agent
-        # Pass
-        # Leaving it blank as this is not supported in the current version of the CDK / Cloudformation... would need a custom resource to do this
+        # Custom resource to update the agent with the guardrail details, as cloudformation does not support this feature at this time
+        # Define the request body for the api call that the custom resource will use. Notice that the agentId is part of the URI and not the request body of the API call, but we can pass it in as a key value pair.
+        updateAgentParams = {
+            "agentId": bedrock_agent.attr_agent_id,
+            "agentName": bedrock_agent.agent_name,
+            "agentResourceRoleArn": bedrock_agent.agent_resource_role_arn,
+            "foundationModel": bedrock_agent.foundation_model,
+            "guardrailConfiguration": { 
+                "guardrailIdentifier": cfn_guardrail.attr_guardrail_id,
+                "guardrailVersion": cfn_guardrail_version.attr_version
+            },
+            "idleSessionTTLInSeconds": 600
+        }
+
+        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
+        update_agent_cr = cr.AwsCustomResource(self, "UpdateAgentCustomResource",
+            on_create=cr.AwsSdkCall(
+                service="bedrock-agent",
+                action="updateAgent",
+                parameters=updateAgentParams,
+                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                ),
+            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+                ),
+            on_update=cr.AwsSdkCall(
+                service="bedrock-agent",
+                action="updateAgent",
+                parameters=updateAgentParams,
+                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                ),            
+            )
+     
+        # Define IAM permission policy for the custom resource    
+        update_agent_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "bedrock:UpdateAgent", 
+                "iam:CreateServiceLinkedRole", 
+                "iam:PassRole"
+            ],
+            resources=[
+                f"arn:aws:bedrock:{self.region}:{self.account}:agent/{bedrock_agent.ref}"
+            ],
+            )
+        )  
+
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/UpdateAgentCustomResource/CustomResourcePolicy/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+            True
+        )
