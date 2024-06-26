@@ -315,31 +315,6 @@ class BedrockStack(Stack):
 
         self.agent_arn = bedrock_agent.ref
 
-        ### 3. Create an alias for the bedrock agent
-
-        # Create an alias for the bedrock agent        
-        cfn_agent_alias = bedrock.CfnAgentAlias(self, "MyCfnAgentAlias",
-            agent_alias_name="bedrock-agent-alias",
-            agent_id=bedrock_agent.ref,
-            description="bedrock agent alias to simplify agent invocation",
-            # note: when initially creating the agent alias, the agent version is defined automatically
-            # routing_configuration=[bedrock.CfnAgentAlias.AgentAliasRoutingConfigurationListItemProperty(
-            #     agent_version="1",
-            # )],
-            tags={
-                "owner": "saas"
-            }
-        )
-        cfn_agent_alias.add_dependency(bedrock_agent)     
-        
-        agent_alias_string = cfn_agent_alias.ref
-        agent_alias = agent_alias_string.split("|")[-1]
-        
-        CfnOutput(self, "BedrockAgentAlias",
-            value=agent_alias,
-            export_name="BedrockAgentAlias"
-        )
-
         ### 4. Setting up model invocation logging for Amazon Bedrock
         
         # Create a S3 bucket for model invocation logs
@@ -534,56 +509,102 @@ class BedrockStack(Stack):
             description="This is the deployed version of the guardrail configuration",
         )
         
-        # Custom resource to update the agent with the guardrail details, as cloudformation does not support this feature at this time
-        # Define the request body for the api call that the custom resource will use. Notice that the agentId is part of the URI and not the request body of the API call, but we can pass it in as a key value pair.
-        updateAgentParams = {
-            "agentId": bedrock_agent.attr_agent_id,
-            "agentName": bedrock_agent.agent_name,
-            "agentResourceRoleArn": bedrock_agent.agent_resource_role_arn,
-            "foundationModel": bedrock_agent.foundation_model,
-            "guardrailConfiguration": { 
-                "guardrailIdentifier": cfn_guardrail.attr_guardrail_id,
-                "guardrailVersion": cfn_guardrail_version.attr_version
-            },
-            "idleSessionTTLInSeconds": 600
-        }
+        # ### currently bugs out with :Response object is too long.:
+        # # Custom resource to update the agent with the guardrail details, as cloudformation does not support this feature at this time
+        # # Define the request body for the api call that the custom resource will use. Notice that the agentId is part of the URI and not the request body of the API call, but we can pass it in as a key value pair.
+        # # Updating the agent requries re-submitting all its override and instruction configurations, as they will be lost otherwise if not passed in again with the updateAgent call. 
+        # updateAgentParams = {
+        #     "agentId": bedrock_agent.attr_agent_id,
+        #     "agentName": bedrock_agent.agent_name,
+        #     "agentResourceRoleArn": bedrock_agent.agent_resource_role_arn,
+        #     "foundationModel": bedrock_agent.foundation_model,
+        #     "guardrailConfiguration": { 
+        #         "guardrailIdentifier": cfn_guardrail.attr_guardrail_id,
+        #         "guardrailVersion": cfn_guardrail_version.attr_version
+        #     },
+        #     "idleSessionTTLInSeconds": 600,
+        #     "instruction": agent_instruction,
+        #     "promptOverrideConfiguration": { 
+        #         "promptConfigurations": [ 
+        #             { 
+        #                 "basePromptTemplate": orc_temp_def,
+        #                 "inferenceConfiguration": { 
+        #                     "maximumLength": 2048,
+        #                     "stopSequences": ["</error>","</answer>","</invoke>"],
+        #                     "temperature": 0,
+        #                     "topK": 250,
+        #                     "topP": 1
+        #                 },
+        #                 "promptCreationMode": "OVERRIDDEN",
+        #                 "promptState": "ENABLED",
+        #                 "promptType": "ORCHESTRATION"
+        #             },  
+        #             { 
+        #                 "basePromptTemplate": pre_temp_def,
+        #                 "inferenceConfiguration": { 
+        #                     "maximumLength": 2048,
+        #                     "stopSequences": ["⏎⏎Human:"],
+        #                     "temperature": 0,
+        #                     "topK": 250,
+        #                     "topP": 1
+        #                 },
+        #                 "promptCreationMode": "OVERRIDDEN",
+        #                 "promptState": "DISABLED",
+        #                 "promptType": "PRE_PROCESSING"
+        #             },
+        #             { 
+        #                 "basePromptTemplate": kb_temp_def,
+        #                 "inferenceConfiguration": { 
+        #                     "maximumLength": 2048,
+        #                     "stopSequences": ["⏎⏎Human:"],
+        #                     "temperature": 0,
+        #                     "topK": 250,
+        #                     "topP": 1
+        #                 },
+        #                 "promptCreationMode": "OVERRIDDEN",
+        #                 "promptState": "ENABLED",
+        #                 "promptType": "KNOWLEDGE_BASE_RESPONSE_GENERATION"
+        #             },      
+        #         ]   
+        #     } 
+        # }
 
-        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
-        update_agent_cr = cr.AwsCustomResource(self, "UpdateAgentCustomResource",
-            on_create=cr.AwsSdkCall(
-                service="bedrock-agent",
-                action="updateAgent",
-                parameters=updateAgentParams,
-                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
-                ),
-            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
-                resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
-                ),
-            on_update=cr.AwsSdkCall(
-                service="bedrock-agent",
-                action="updateAgent",
-                parameters=updateAgentParams,
-                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
-                ),            
-            )
+        # # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
+        # update_agent_cr = cr.AwsCustomResource(self, "UpdateAgentCustomResource",
+        #     on_create=cr.AwsSdkCall(
+        #         service="bedrock-agent",
+        #         action="updateAgent",
+        #         parameters=updateAgentParams,
+        #         physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+        #         ),
+        #     policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+        #         resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+        #         ),
+        #     on_update=cr.AwsSdkCall(
+        #         service="bedrock-agent",
+        #         action="updateAgent",
+        #         parameters=updateAgentParams,
+        #         physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+        #         ),            
+        #     )
      
-        # Define IAM permission policy for the custom resource    
-        update_agent_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
-            effect=iam.Effect.ALLOW,
-            actions=[
-                "bedrock:UpdateAgent", 
-                "iam:CreateServiceLinkedRole", 
-                "iam:PassRole"
-            ],
-            resources=[
-                f"arn:aws:bedrock:{self.region}:{self.account}:agent/{bedrock_agent.ref}"
-            ],
-            )
-        )  
+        # # Define IAM permission policy for the custom resource    
+        # update_agent_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+        #     effect=iam.Effect.ALLOW,
+        #     actions=[
+        #         "bedrock:UpdateAgent", 
+        #         "iam:CreateServiceLinkedRole", 
+        #         "iam:PassRole"
+        #     ],
+        #     resources=[
+        #         f"arn:aws:bedrock:{self.region}:{self.account}:agent/{bedrock_agent.ref}"
+        #     ],
+        #     )
+        # )  
 
-        NagSuppressions.add_resource_suppressions_by_path(
-            self,
-            '/BedrockAgentStack/UpdateAgentCustomResource/CustomResourcePolicy/Resource',
-            [NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
-            True
-        )
+        # NagSuppressions.add_resource_suppressions_by_path(
+        #     self,
+        #     '/BedrockAgentStack/UpdateAgentCustomResource/CustomResourcePolicy/Resource',
+        #     [NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+        #     True
+        # )

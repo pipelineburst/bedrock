@@ -8,7 +8,7 @@ from stacks.lambda_stack import LambdaStack
 from stacks.bedrock_stack import BedrockStack
 from stacks.aoss_stack import AossStack
 from stacks.kb_stack import KnowledgeBaseStack
-from stacks.streamlit_stack import StreamlitStack
+from stacks.apigw_stack import ApiGwStack
 
 app = cdk.App()
 
@@ -60,9 +60,9 @@ stack5 = KnowledgeBaseStack(app, "KnowledgebaseStack",
             agent_arn=stack3.agent_arn,
 )
 
-stack6 = StreamlitStack(app, "StreamlitStack",
+stack6 = ApiGwStack(app, "ApiGwStack",
             env=cdk.Environment(account=dict1['account_id'], region=dict1['region']),
-            description="Streamlit app for the bedrock sandbox account", 
+            description="API Gateway stack, including optional resources", 
             termination_protection=False, 
             tags={"project":"bedrock-agents"},
             dict1=dict1

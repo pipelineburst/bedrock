@@ -85,7 +85,14 @@ class AossStack(Stack):
         bedrock_kb_role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
-                actions=["aoss:APIAccessAll"],
+                actions=[
+                    "aoss:APIAccessAll",
+                    "es:ESHttpPut", 
+                    "iam:CreateServiceLinkedRole", 
+                    "iam:PassRole", 
+                    "iam:ListUsers",
+                    "iam:ListRoles", 
+                    ],
                 resources=["*"],
             )
         )
@@ -162,7 +169,7 @@ class AossStack(Stack):
         # Define the request body for the lambda invoke api call that the custom resource will use
         aossLambdaParams = {
                     "FunctionName": create_index_lambda.function_name,
-                    "InvocationType": "Event"
+                    "InvocationType": "RequestResponse"
                 }
         
         # On creation of the stack, trigger the Lambda function we just defined 
@@ -183,7 +190,11 @@ class AossStack(Stack):
         # Define IAM permission policy for the custom resource    
         trigger_lambda_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
-            actions=["lambda:*", "iam:CreateServiceLinkedRole", "iam:PassRole"],
+            actions=[
+                "lambda:*", 
+                "iam:CreateServiceLinkedRole", 
+                "iam:PassRole"
+            ],
             resources=["*"],
             )
         )  
