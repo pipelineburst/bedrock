@@ -68,6 +68,18 @@ class KnowledgeBaseStack(Stack):
         CfnOutput(self, "BedrockKbName",
             value=bedrock_knowledge_base.name,
             export_name="BedrockKbName"
+        )
+
+        # Use existing agent execution role and add the bedrock:Retrieve permission to it        
+        agent_execution_role = iam.Role.from_role_arn(self, "AgentExecutionRole", bedrock_role_arn)
+        agent_execution_role.add_to_principal_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:Retrieve"
+                ],
+                resources=[bedrock_knowledge_base.attr_knowledge_base_arn]
+            )
         )           
         
         # Create the data source for the bedrock knowledgebase. Chunking max tokens of 300 is bedrock's sensible default.
@@ -112,7 +124,7 @@ class KnowledgeBaseStack(Stack):
             "knowledgeBaseId": bedrock_knowledge_base.attr_knowledge_base_id,
         }
 
-        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
+        # Define a custom resource to make an AwsSdk startIngestionJob call     
         ingestion_job_cr = cr.AwsCustomResource(self, "IngestionCustomResource",
             on_create=cr.AwsSdkCall(
                 service="bedrock-agent",

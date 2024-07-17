@@ -32,19 +32,6 @@ class BedrockStack(Stack):
 
         # Imporing and instantiating the access logs bucket so we can write the logs into it
         access_logs_bucket = s3.Bucket.from_bucket_name(self, "AccessLogsBucketName", Fn.import_value("AccessLogsBucketName"))
-        # access_logs_bucket.add_to_resource_policy(
-        #     iam.PolicyStatement(
-        #         effect=iam.Effect.ALLOW,
-        #         actions=[
-        #             "logs:CreateLogStream", 
-        #             "logs:PutLogEvents"
-        #             ],
-        #         resources=[
-        #             Fn.import_value("AccessLogsBucketArn"),
-        #             Fn.import_value("AccessLogsBucketArn") + ":*"
-        #             ],
-        #     )
-        # )
         
         # Create S3 bucket for the OpenAPI action group schemas 
         schema_bucket = s3.Bucket(self, "schema-bucket",
@@ -294,6 +281,16 @@ class BedrockStack(Stack):
                     api_schema=bedrock.CfnAgent.APISchemaProperty(
                         payload=search_schema_def,
                         ),
+                    ),
+                # bedrock.CfnAgent.AgentActionGroupProperty(
+                #     action_group_name="CodeInterpreterAction",
+                #     parent_action_group_signature="AMAZON.CodeInterpreter",
+                #     action_group_state="ENABLED",
+                #     ),
+                bedrock.CfnAgent.AgentActionGroupProperty(
+                    action_group_name="UserInputAction",
+                    parent_action_group_signature="AMAZON.UserInput",
+                    action_group_state="ENABLED",
                     )
                 ],
         )
@@ -417,7 +414,7 @@ class BedrockStack(Stack):
             }
         }
 
-        # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
+        # Define a custom resource to make an AwsSdk putModelInvocationLoggingConfiguration call     
         model_logging_cr = cr.AwsCustomResource(self, "ModelLoggingCustomResource",
             on_create=cr.AwsSdkCall(
                 service="Bedrock",
@@ -509,102 +506,104 @@ class BedrockStack(Stack):
             description="This is the deployed version of the guardrail configuration",
         )
         
-        # ### currently bugs out with :Response object is too long.:
-        # # Custom resource to update the agent with the guardrail details, as cloudformation does not support this feature at this time
-        # # Define the request body for the api call that the custom resource will use. Notice that the agentId is part of the URI and not the request body of the API call, but we can pass it in as a key value pair.
-        # # Updating the agent requries re-submitting all its override and instruction configurations, as they will be lost otherwise if not passed in again with the updateAgent call. 
-        # updateAgentParams = {
-        #     "agentId": bedrock_agent.attr_agent_id,
-        #     "agentName": bedrock_agent.agent_name,
-        #     "agentResourceRoleArn": bedrock_agent.agent_resource_role_arn,
-        #     "foundationModel": bedrock_agent.foundation_model,
-        #     "guardrailConfiguration": { 
-        #         "guardrailIdentifier": cfn_guardrail.attr_guardrail_id,
-        #         "guardrailVersion": cfn_guardrail_version.attr_version
-        #     },
-        #     "idleSessionTTLInSeconds": 600,
-        #     "instruction": agent_instruction,
-        #     "promptOverrideConfiguration": { 
-        #         "promptConfigurations": [ 
-        #             { 
-        #                 "basePromptTemplate": orc_temp_def,
-        #                 "inferenceConfiguration": { 
-        #                     "maximumLength": 2048,
-        #                     "stopSequences": ["</error>","</answer>","</invoke>"],
-        #                     "temperature": 0,
-        #                     "topK": 250,
-        #                     "topP": 1
-        #                 },
-        #                 "promptCreationMode": "OVERRIDDEN",
-        #                 "promptState": "ENABLED",
-        #                 "promptType": "ORCHESTRATION"
-        #             },  
-        #             { 
-        #                 "basePromptTemplate": pre_temp_def,
-        #                 "inferenceConfiguration": { 
-        #                     "maximumLength": 2048,
-        #                     "stopSequences": ["⏎⏎Human:"],
-        #                     "temperature": 0,
-        #                     "topK": 250,
-        #                     "topP": 1
-        #                 },
-        #                 "promptCreationMode": "OVERRIDDEN",
-        #                 "promptState": "DISABLED",
-        #                 "promptType": "PRE_PROCESSING"
-        #             },
-        #             { 
-        #                 "basePromptTemplate": kb_temp_def,
-        #                 "inferenceConfiguration": { 
-        #                     "maximumLength": 2048,
-        #                     "stopSequences": ["⏎⏎Human:"],
-        #                     "temperature": 0,
-        #                     "topK": 250,
-        #                     "topP": 1
-        #                 },
-        #                 "promptCreationMode": "OVERRIDDEN",
-        #                 "promptState": "ENABLED",
-        #                 "promptType": "KNOWLEDGE_BASE_RESPONSE_GENERATION"
-        #             },      
-        #         ]   
-        #     } 
-        # }
+        ### currently bugs out with :Response object is too long.:
+        # Custom resource to update the agent with the guardrail details, as cloudformation does not support this feature at this time
+        # Define the request body for the api call that the custom resource will use. Notice that the agentId is part of the URI and not the request body of the API call, but we can pass it in as a key value pair.
+        # Updating the agent requries re-submitting all its override and instruction configurations, as they will be lost otherwise if not passed in again with the updateAgent call. 
+        updateAgentParams = {
+            "agentId": bedrock_agent.attr_agent_id,
+            "agentName": bedrock_agent.agent_name,
+            "agentResourceRoleArn": bedrock_agent.agent_resource_role_arn,
+            "foundationModel": bedrock_agent.foundation_model,
+            "guardrailConfiguration": { 
+                "guardrailIdentifier": cfn_guardrail.attr_guardrail_id,
+                "guardrailVersion": cfn_guardrail_version.attr_version
+            },
+            "idleSessionTTLInSeconds": 600,
+            "instruction": agent_instruction,
+            "promptOverrideConfiguration": { 
+                "promptConfigurations": [ 
+                    { 
+                        "basePromptTemplate": orc_temp_def,
+                        "inferenceConfiguration": { 
+                            "maximumLength": 2048,
+                            "stopSequences": ["</error>","</answer>","</invoke>"],
+                            "temperature": 0,
+                            "topK": 250,
+                            "topP": 1
+                        },
+                        "promptCreationMode": "OVERRIDDEN",
+                        "promptState": "ENABLED",
+                        "promptType": "ORCHESTRATION"
+                    },  
+                    { 
+                        "basePromptTemplate": pre_temp_def,
+                        "inferenceConfiguration": { 
+                            "maximumLength": 2048,
+                            "stopSequences": ["⏎⏎Human:"],
+                            "temperature": 0,
+                            "topK": 250,
+                            "topP": 1
+                        },
+                        "promptCreationMode": "OVERRIDDEN",
+                        "promptState": "DISABLED",
+                        "promptType": "PRE_PROCESSING"
+                    },
+                    { 
+                        "basePromptTemplate": kb_temp_def,
+                        "inferenceConfiguration": { 
+                            "maximumLength": 2048,
+                            "stopSequences": ["⏎⏎Human:"],
+                            "temperature": 0,
+                            "topK": 250,
+                            "topP": 1
+                        },
+                        "promptCreationMode": "OVERRIDDEN",
+                        "promptState": "ENABLED",
+                        "promptType": "KNOWLEDGE_BASE_RESPONSE_GENERATION"
+                    },      
+                ]   
+            } 
+        }
 
-        # # Define a custom resource to make an AwsSdk startCrawler call to the Glue API     
-        # update_agent_cr = cr.AwsCustomResource(self, "UpdateAgentCustomResource",
-        #     on_create=cr.AwsSdkCall(
-        #         service="bedrock-agent",
-        #         action="updateAgent",
-        #         parameters=updateAgentParams,
-        #         physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
-        #         ),
-        #     policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
-        #         resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
-        #         ),
-        #     on_update=cr.AwsSdkCall(
-        #         service="bedrock-agent",
-        #         action="updateAgent",
-        #         parameters=updateAgentParams,
-        #         physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
-        #         ),            
-        #     )
+        # Define a custom resource to make an AwsSdk updateAgent call     
+        update_agent_cr = cr.AwsCustomResource(self, "UpdateAgentCustomResource",
+            on_create=cr.AwsSdkCall(
+                service="bedrock-agent",
+                action="updateAgent",
+                parameters=updateAgentParams,
+                output_paths=["agent.updatedAt"],
+                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                ),
+            policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+                ),
+            on_update=cr.AwsSdkCall(
+                service="bedrock-agent",
+                action="updateAgent",
+                parameters=updateAgentParams,
+                output_paths=["agent.updatedAt"],
+                physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                ),            
+            )
      
-        # # Define IAM permission policy for the custom resource    
-        # update_agent_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
-        #     effect=iam.Effect.ALLOW,
-        #     actions=[
-        #         "bedrock:UpdateAgent", 
-        #         "iam:CreateServiceLinkedRole", 
-        #         "iam:PassRole"
-        #     ],
-        #     resources=[
-        #         f"arn:aws:bedrock:{self.region}:{self.account}:agent/{bedrock_agent.ref}"
-        #     ],
-        #     )
-        # )  
+        # Define IAM permission policy for the custom resource    
+        update_agent_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "bedrock:UpdateAgent", 
+                "iam:CreateServiceLinkedRole", 
+                "iam:PassRole"
+            ],
+            resources=[
+                f"arn:aws:bedrock:{self.region}:{self.account}:agent/{bedrock_agent.ref}"
+            ],
+            )
+        )  
 
-        # NagSuppressions.add_resource_suppressions_by_path(
-        #     self,
-        #     '/BedrockAgentStack/UpdateAgentCustomResource/CustomResourcePolicy/Resource',
-        #     [NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
-        #     True
-        # )
+        NagSuppressions.add_resource_suppressions_by_path(
+            self,
+            '/BedrockAgentStack/UpdateAgentCustomResource/CustomResourcePolicy/Resource',
+            [NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
+            True
+        )
