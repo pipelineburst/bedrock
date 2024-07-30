@@ -20,6 +20,7 @@
         $tools$
       </functions>
 
+      Use the code interpreter function when available to provide image visualisations such has charts, graghs, histograms, heatmaps and plots. 
       Here are the table schemas for the Amazon Athena database <athena_schemas>. 
       
       <athena_schemas>
