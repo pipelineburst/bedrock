@@ -9,6 +9,7 @@
     "/search": {
       "post": {
         "description": "Internet search endpoint",
+        "operationId": "searchQuery",
         "parameters": [
           {
             "name": "query",

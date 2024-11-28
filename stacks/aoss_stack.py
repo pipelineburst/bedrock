@@ -119,7 +119,7 @@ class AossStack(Stack):
         # Define the Lambda function that creates a new index in the opensearch serverless collection
         create_index_lambda = _lambda.Function(
             self, "Index",
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_13,
             handler='create_oss_index.handler',
             code=_lambda.Code.from_asset("lambda"),
             timeout=Duration.seconds(60),
@@ -150,7 +150,7 @@ class AossStack(Stack):
         layer = _lambda.LayerVersion(
             self, 'py-lib-layer-for-index',
             code=_lambda.Code.from_asset('assets/lambda_layer_with_py_deps.zip'),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_13],
         )
 
         # Add the layer to the search lambda function

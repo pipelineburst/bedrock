@@ -9,6 +9,7 @@
     "/search": {
       "post": {
         "description": "content scraping endpoint",
+        "operationId": "webQuery",
         "parameters": [
           {
             "name": "inputURL",

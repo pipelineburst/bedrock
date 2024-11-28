@@ -97,6 +97,8 @@ class DataFoundationStack(Stack):
             destination_bucket=data_bucket,
             destination_key_prefix="data-set/"
         )
+        
+        upload_dataset.node.add_dependency(data_bucket)
 
         NagSuppressions.add_resource_suppressions_by_path(
             self,

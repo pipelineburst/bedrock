@@ -1,5 +1,5 @@
 {
-  "openapi": "3.0.1",
+  "openapi": "3.0.0",
   "info": {
     "title": "AthenaQuery API",
     "description": "API for querying data from an Athena database",
@@ -9,6 +9,7 @@
     "/athenaQuery": {
       "post": {
         "description": "Execute a query on an Athena database",
+        "operationId": "athenaQuery",
         "requestBody": {
           "description": "Athena query details",
           "required": true,
@@ -17,7 +18,7 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "Procedure ID": {
+                  "procedureID": {
                     "type": "string",
                     "description": "Unique identifier for the procedure",
                     "nullable": true

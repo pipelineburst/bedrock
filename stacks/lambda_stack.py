@@ -22,7 +22,7 @@ class LambdaStack(Stack):
         # Defines an AWS Lambda function
         athena_lambda = _lambda.Function(
             self, 'athena-lambda-action',
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_13,
             code=_lambda.Code.from_asset('lambda'),
             handler='lambda_athena.handler',
             timeout=Duration.seconds(60),
@@ -42,32 +42,36 @@ class LambdaStack(Stack):
             iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
             actions=[
-                    "athena:BatchGetQueryExecution",
-                    "athena:CancelQueryExecution",
-                    "athena:GetCatalogs",
-                    "athena:GetExecutionEngine",
-                    "athena:GetExecutionEngines",
-                    "athena:GetNamespace",
-                    "athena:GetNamespaces",
-                    "athena:GetQueryExecution",
-                    "athena:GetQueryExecutions",
-                    "athena:GetQueryResults",
-                    "athena:GetQueryResultsStream",
-                    "athena:GetTable",
-                    "athena:GetTables",
-                    "athena:ListQueryExecutions",
-                    "athena:RunQuery",
-                    "athena:StartQueryExecution",
-                    "athena:StopQueryExecution",
-                    "athena:ListWorkGroups",
-                    "athena:ListEngineVersions",
-                    "athena:GetWorkGroup",
-                    "athena:GetDataCatalog",
-                    "athena:GetDatabase",
-                    "athena:GetTableMetadata",
-                    "athena:ListDataCatalogs",
-                    "athena:ListDatabases",
-                    "athena:ListTableMetadata",
+                "athena:BatchGetQueryExecution",
+                "athena:CancelQueryExecution",
+                "athena:GetCatalogs",
+                "athena:GetDataCatalog",
+                "athena:GetDatabase",
+                "athena:GetExecutionEngine",
+                "athena:GetExecutionEngines",
+                "athena:GetNamespace",
+                "athena:GetNamespaces",
+                "athena:GetQueryExecution",
+                "athena:GetQueryExecutions",
+                "athena:GetQueryResults",
+                "athena:GetQueryResultsStream",
+                "athena:GetTable",
+                "athena:GetTableMetadata",
+                "athena:GetTables",
+                "athena:GetWorkGroup",
+                "athena:ListDataCatalogs",
+                "athena:ListDatabases",
+                "athena:ListEngineVersions",
+                "athena:ListQueryExecutions",
+                "athena:ListTableMetadata",
+                "athena:ListWorkGroups",
+                "athena:RunQuery",
+                "athena:StartQueryExecution",
+                "athena:StopQueryExecution",
+                "athena:BatchGetNamedQuery",
+                "athena:BatchGetPreparedStatement",
+                "glue:GetDatabase",
+                "glue:GetDatabases"
                 ],
             resources=["*"],
             )
@@ -113,7 +117,8 @@ class LambdaStack(Stack):
             resources=[
                     f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:catalog",
                     f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:database/{Fn.import_value('GlueDatabaseName')}",
-                    f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:table/{Fn.import_value('GlueDatabaseName')}/*"
+                    f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:database/default",
+                    f"arn:aws:glue:{dict1['region']}:{dict1['account_id']}:table/{Fn.import_value('GlueDatabaseName')}/*",
                     ],
             )
         )  
@@ -146,13 +151,13 @@ class LambdaStack(Stack):
         layer = _lambda.LayerVersion(
             self, 'py-lib-layer',
             code=_lambda.Code.from_asset('assets/lambda_layer_with_py_deps.zip'),
-            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_13],
         )
 
         # Defines an AWS Lambda function
         search_lambda = _lambda.Function(
             self, 'search-lambda-action',
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_13,
             code=_lambda.Code.from_asset("lambda"),
             handler='lambda_search.handler',
             timeout=Duration.seconds(60),

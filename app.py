@@ -13,8 +13,8 @@ from stacks.apigw_stack import ApiGwStack
 app = cdk.App()
 
 dict1 = {
-    "region": 'us-west-2',
-    "account_id": '851725325557'
+    "region": 'us-east-1',
+    "account_id": '851725325557' # SWE-Dev
 }
 
 stack1 = DataFoundationStack(app, "DataStack",

@@ -115,14 +115,32 @@ class BedrockStack(Stack):
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
-                    "bedrock:InvokeModel", 
-                    "bedrock:InvokeModelEndpoint", 
-                    "bedrock:InvokeModelEndpointAsync"
+                    "bedrock:InvokeModel*", 
+                    "bedrock:CreateInferenceProfile",
                 ],
                 resources=[
-                    "arn:aws:bedrock:{}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0".format(self.region)
-                ]
-                ,
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    "arn:aws:bedrock:*:*:inference-profile/*",
+                    "arn:aws:bedrock:*:*:application-inference-profile/*"
+                ],
+            )
+        )
+
+        bedrock_agent_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:GetInferenceProfile",
+                    "bedrock:ListInferenceProfiles",
+                    "bedrock:DeleteInferenceProfile",
+                    "bedrock:TagResource",
+                    "bedrock:UntagResource",
+                    "bedrock:ListTagsForResource"
+                ],
+                resources=[
+                    "arn:aws:bedrock:*:*:inference-profile/*",
+                    "arn:aws:bedrock:*:*:application-inference-profile/*"
+                ],
             )
         )
         
@@ -215,7 +233,7 @@ class BedrockStack(Stack):
             agent_name='saas-acs-bedrock-agent',
             description="This is a bedrock agent that can be invoked by calling the bedrock agent alias and agent id.",
             auto_prepare=True,
-            foundation_model="anthropic.claude-3-haiku-20240307-v1:0",
+            foundation_model="us.anthropic.claude-3-5-haiku-20241022-v1:0",
             instruction=agent_instruction,
             agent_resource_role_arn=str(bedrock_agent_role.role_arn),
             prompt_override_configuration=bedrock.CfnAgent.PromptOverrideConfigurationProperty(

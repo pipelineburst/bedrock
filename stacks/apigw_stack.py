@@ -39,7 +39,7 @@ class ApiGwStack(Stack):
         # Create the lambda function that will be invoked by the API Gateway
         agent_invocation_lambda = _lambda.Function(
             self, 'agent-invocation-lambda',
-            runtime=_lambda.Runtime.PYTHON_3_12,
+            runtime=_lambda.Runtime.PYTHON_3_13,
             code=_lambda.Code.from_asset('lambda'),
             handler='agent_invocation.handler',
             timeout=Duration.seconds(60),
