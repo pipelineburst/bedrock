@@ -115,35 +115,20 @@ class BedrockStack(Stack):
             iam.PolicyStatement(
                 effect=iam.Effect.ALLOW,
                 actions=[
-                    "bedrock:InvokeModel*", 
-                    "bedrock:CreateInferenceProfile",
+                    "*",
                 ],
                 resources=[
                     "arn:aws:bedrock:*::foundation-model/*",
                     "arn:aws:bedrock:*:*:inference-profile/*",
-                    "arn:aws:bedrock:*:*:application-inference-profile/*"
+                    "arn:aws:bedrock:*:*:application-inference-profile/*",
+                    "arn:aws:bedrock:*:*:agent-alias/*",
+                    "arn:aws:bedrock:*:*:agent/*",
+                    "arn:aws:bedrock:*:*:guardrail*",
+                    "arn:aws:bedrock:*:*:knowledge*",
                 ],
             )
         )
 
-        bedrock_agent_role.add_to_policy(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                actions=[
-                    "bedrock:GetInferenceProfile",
-                    "bedrock:ListInferenceProfiles",
-                    "bedrock:DeleteInferenceProfile",
-                    "bedrock:TagResource",
-                    "bedrock:UntagResource",
-                    "bedrock:ListTagsForResource"
-                ],
-                resources=[
-                    "arn:aws:bedrock:*:*:inference-profile/*",
-                    "arn:aws:bedrock:*:*:application-inference-profile/*"
-                ],
-            )
-        )
-        
         # Add S3 access inline permissions to the bedrock agent execution role to write logs and access the data buckets
         bedrock_agent_role.add_to_policy(
             iam.PolicyStatement(
@@ -233,7 +218,7 @@ class BedrockStack(Stack):
             agent_name='saas-acs-bedrock-agent',
             description="This is a bedrock agent that can be invoked by calling the bedrock agent alias and agent id.",
             auto_prepare=True,
-            foundation_model="us.anthropic.claude-3-5-haiku-20241022-v1:0",
+            foundation_model="anthropic.claude-3-5-haiku-20241022-v1:0",
             instruction=agent_instruction,
             agent_resource_role_arn=str(bedrock_agent_role.role_arn),
             prompt_override_configuration=bedrock.CfnAgent.PromptOverrideConfigurationProperty(
@@ -329,7 +314,7 @@ class BedrockStack(Stack):
         )          
 
         self.agent_arn = bedrock_agent.ref
-
+        
         ### 4. Setting up model invocation logging for Amazon Bedrock
         
         # Create a S3 bucket for model invocation logs
@@ -625,3 +610,113 @@ class BedrockStack(Stack):
             [NagPackSuppression(id="AwsSolutions-IAM5", reason="Policies are set by Custom Resource.")],
             True
         )
+
+
+        ### 6. Prepare agent if bedrock knowledgebase is not used 
+        # OPTION: Was the "knowledgebase" variable passed in as part of the cdk deploy --context? 
+        # If not, then then only the agent will be deployed now, as the Knowledgebase resources and alias creation will not happen by the downstream cdk stacks.
+
+        knowledgebase = self.node.try_get_context('knowledgebase')
+        if knowledgebase != "true":
+            
+            ### Create an agent alias to deploy agent
+            ### Start by preparing the draft agent version
+
+            prepareAgentParams = {
+                "agentId": bedrock_agent.ref,
+            }
+
+            # Define a custom resource to make an AwsSdk call to prepare the agent     
+            prepare_agent_cr = cr.AwsCustomResource(self, "PrepareAgent",
+                on_create=cr.AwsSdkCall(
+                    service="bedrock-agent",
+                    action="prepareAgent",
+                    parameters=prepareAgentParams,
+                    physical_resource_id=cr.PhysicalResourceId.of("Parameter.ARN")
+                    ),
+                policy=cr.AwsCustomResourcePolicy.from_sdk_calls(
+                    resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE
+                    )
+                )
+        
+            # Define IAM permission policy for the custom resource    
+            prepare_agent_cr.grant_principal.add_to_principal_policy(iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:prepareAgent", 
+                    "iam:CreateServiceLinkedRole", 
+                    "iam:PassRole",
+                    "lambda:*",
+                ],
+                resources=["*"],
+                )
+            )  
+
+            NagSuppressions.add_resource_suppressions(
+                prepare_agent_cr,
+                [NagPackSuppression(id="AwsSolutions-IAM5", reason="We support the use of wildcards. But a backlog item should be added to restrict the resources to the specific resources that the custom resource needs to access")],
+                True
+            )  
+
+            ### Then create an alias to deploy the agent
+
+            # Create an alias for the bedrock agent        
+            cfn_agent_alias = bedrock.CfnAgentAlias(self, "MyCfnAgentAlias",
+                agent_alias_name="bedrock-agent-alias",
+                agent_id=bedrock_agent.ref,
+                description="bedrock agent alias to simplify agent invocation",
+                # note: when initially creating the agent alias, the agent version is defined automatically
+                # routing_configuration=[bedrock.CfnAgentAlias.AgentAliasRoutingConfigurationListItemProperty(
+                #     agent_version="1",
+                # )],
+                tags={
+                    "owner": "saas"
+                }
+            )  
+            
+            agent_alias_string = cfn_agent_alias.ref
+            agent_alias = agent_alias_string.split("|")[-1]
+            
+            CfnOutput(self, "BedrockAgentAlias",
+                value=agent_alias,
+                export_name="BedrockAgentAlias"
+            )
+
+            cfn_agent_alias.node.add_dependency(prepare_agent_cr)  
+               
+        ### 7. Creating a role for the agent invocation only - apps and users can assume this role to invoke the agent
+
+        # Create a role that allows agent invocation only. The role has a trust policy that allows anyone in the account to assume it.
+        bedrock_user_role = iam.Role(self, 'bedrock-user-role',
+            role_name=f'AmazonBedrockUserRole_' + str(hashlib.sha384(hash_base_string).hexdigest())[:15],
+            assumed_by=iam.AccountRootPrincipal(),
+        )
+
+        bedrock_user_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "bedrock:InvokeAgent",
+                ],
+                resources=[
+                    # bedrock_agent.attr_agent_arn,
+                    # f"arn:aws:bedrock:{self.region}:{self.account}:agent-alias/{bedrock_agent.ref}/{agent_alias}",
+                    cfn_agent_alias.attr_agent_alias_arn
+                ],
+            )
+        )
+
+        bedrock_user_role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=["sts:AssumeRole"],
+                resources=[bedrock_user_role.role_arn]
+            )
+        )
+
+        CfnOutput(self, "BedrockUserRoleArn",
+            value=bedrock_user_role.role_arn,
+            export_name="BedrockUserRoleArn"
+        )
+
+
